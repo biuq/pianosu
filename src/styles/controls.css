@@ -1,0 +1,138 @@
+.control-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.neon-select-container {
+  position: relative;
+  width: 250px;
+}
+
+.neon-select {
+  width: 100%;
+  padding: 12px 20px;
+  font-size: large;
+  background-color: var(--darker);
+  color: var(--text);
+  border: 2px solid var(--neon-purple);
+  border-radius: 8px;
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  box-shadow: 0 0 10px var(--neon-purple),
+              inset 0 0 10px var(--neon-purple);
+  transition: all 0.3s ease;
+}
+
+.neon-select:hover {
+  border-color: var(--neon-pink);
+  box-shadow: 0 0 20px var(--neon-pink),
+              inset 0 0 15px var(--neon-pink);
+}
+
+.neon-select:focus {
+  border-color: var(--neon-blue);
+  box-shadow: 0 0 25px var(--neon-blue),
+              inset 0 0 20px var(--neon-blue);
+}
+
+/* Custom arrow */
+.neon-select-container::after {
+  content: '▼';
+  position: absolute;
+  top: 50%;
+  right: 20px;
+  transform: translateY(-50%);
+  color: var(--neon-purple);
+  pointer-events: none;
+  text-shadow: 0 0 5px var(--neon-purple);
+  transition: all 0.3s ease;
+}
+
+.neon-select-container:hover::after {
+  color: var(--neon-pink);
+  text-shadow: 0 0 5px var(--neon-pink);
+}
+
+/* Option styling */
+.neon-select option {
+  background-color: var(--dark);
+  color: var(--text);
+  padding: 12px;
+}
+
+/* Remove default focus outline in Firefox */
+.neon-select:-moz-focusring {
+  color: transparent;
+  text-shadow: 0 0 0 var(--text);
+}
+
+.neon-button {
+  padding: 12px 24px;
+  font-size: large;
+  font-weight: bold;
+  background-color: var(--darker);
+  color: var(--text);
+  border: 2px solid var(--neon-blue);
+  border-radius: 8px;
+  cursor: pointer;
+  outline: none;
+  box-shadow: 0 0 10px var(--neon-blue),
+              inset 0 0 10px var(--neon-blue);
+  transition: all 0.3s ease;
+  text-shadow: 0 0 5px var(--neon-blue);
+}
+
+.neon-button:hover {
+  background-color: var(--neon-blue);
+  color: var(--darker);
+  box-shadow: 0 0 20px var(--neon-blue),
+              inset 0 0 15px var(--darker);
+}
+
+.neon-button:active {
+  transform: scale(0.95);
+}
+
+.score-container {
+  display: flex;
+  align-items: center;
+  margin-left: 20px;
+}
+
+.score-bar {
+  width: 200px;
+  height: 30px;
+  background-color: var(--darker);
+  border: 2px solid var(--neon-purple);
+  border-radius: 15px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 0 0 10px var(--neon-purple),
+              inset 0 0 5px var(--neon-purple);
+}
+
+.score-fill {
+  width: 0%;
+  height: 100%;
+  background-color: var(--neon-blue);
+  transition: width 0.3s ease;
+  box-shadow: 0 0 10px var(--neon-blue),
+              inset 0 0 5px var(--neon-blue);
+}
+
+.score-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text);
+  font-weight: bold;
+  text-shadow: 0 0 5px var(--neon-purple);
+}
