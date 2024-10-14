@@ -152,3 +152,11 @@ export function updateScoreBar(score: number, maxScore: number) {
       }, 300);
     }
 }
+
+export function onMidiInputChange(callback: (selectedInput: string) => void) {
+    const select = document.getElementById(ID.midiInputs) as HTMLSelectElement;
+    select.addEventListener('change', (event) => {
+        const selectedInput = (event.target as HTMLSelectElement).value;
+        callback(selectedInput);
+    });
+}

@@ -4,7 +4,7 @@ import './styles/loader.css';
 import './styles/controls.css';
 import './styles/toast.css';
 
-import { hideRequestMessage, showErrorMessage, showRequestMessage, toggleUI, populateMidiInputList, showNotification, updateLoaderSustain, onStartStopButtonClick, changeStartButtomTitle, updateScoreBar, populateMidiFileList, getSelectedMidiFile } from "./ui.ts";
+import { hideRequestMessage, showErrorMessage, showRequestMessage, toggleUI, populateMidiInputList, showNotification, updateLoaderSustain, onStartStopButtonClick, changeStartButtomTitle, updateScoreBar, populateMidiFileList, getSelectedMidiFile, onMidiInputChange } from "./ui.ts";
 import { browserSupportsMidi, checkMidiAccess, requestMidiAccess, MIDI_ACCESS_STATE, getInputNames, createMidiEventReader, waitForInput, MidiInputState, isMidiAccessGranted, isMidiMessageEvent, isMidiInputStateEvent } from "./midi.js";
 import { HexagonPianoVisualization } from "./piano-visualization.js";
 import { PianoSynthesizer } from "./audio-synthesis.js";
@@ -106,57 +106,103 @@ let isPlaybackStarted = false;
 const playerNotes: { note: number, timepoint: number }[] = [];
 let playbackTime = -2;
 
-async function startMidiLoop() {
-    if (!isMidiAccessGranted(midiAccess)) {
-        return;
+onMidiInputChange((selectedInput) => {
+    const input = Array.from(midiAccess.inputs.values()).find((input) => input.id === selectedInput || input.name === selectedInput);
+    if (input) {
+        console.log(input.name);
     }
+});
 
-    while (true) {
-        const input = await waitForInput(midiAccess);
-        for (const input of midiAccess.inputs.values()) {
-            showNotification(`'${input.name ?? input.id}' device detected!`);
-        }
-        const reader = await createMidiEventReader(midiAccess, input.id);
-        populateMidiInputList(getInputNames(midiAccess));
-        while (true) {
-            await reader.next();
-            const event = reader.read();
-            if (event === undefined) {
-                continue;
-            }
+// async function startMidiLoop() {
+//     if (!isMidiAccessGranted(midiAccess)) {
+//         return;
+//     }
+
+//     while (true) {
+//         const input = await waitForInput(midiAccess);
+//         for (const input of midiAccess.inputs.values()) {
+//             showNotification(`'${input.name ?? input.id}' device detected!`);
+//         }
+//         const reader = await createMidiEventReader(midiAccess, input.id);
+//         populateMidiInputList(getInputNames(midiAccess));
+//         while (true) {
+//             await reader.next();
+//             const event = reader.read();
+//             if (event === undefined) {
+//                 continue;
+//             }
     
-            if (isMidiMessageEvent(event)) {
-                const pianoMessage = parsePianoMessage(event.message);
-                if (pianoMessage !== undefined) {
-                    if (isNoteMessage(pianoMessage)) {
-                        if (pianoMessage.isPressed()) {
-                            // showNotification(pianoMessage.getNoteWithNameAndOctaveAndDynamic(), 1000);
-                        }
-                        if (pianoMessage.isPressed()) { 
-                            audioSynth.keyPressed(pianoMessage.getNoteNumber(), pianoMessage.getVelocity());
-                            if (isPlaybackStarted) {
-                                playerNotes.push({ note: pianoMessage.getNoteNumber(), timepoint: playbackTime });
-                            }
-                        } else {
-                            audioSynth.keyReleased(pianoMessage.getNoteNumber());
-                        }
-                        pianoViz.updateKey(pianoMessage);
-                    } else if (isSustainMessage(pianoMessage)) {
-                        audioSynth.setSustainPedal(pianoMessage.isOn());
-                        updateLoaderSustain(pianoMessage.getLevel());
-                    }
-                }
-            } else if (isMidiInputStateEvent(event)) {
-                if (event.state === MidiInputState.DISCONNECTED) {
-                    showNotification(`'${input.name ?? input.id}' disconnected!`);
-                    break;
-                } else if (event.state === MidiInputState.CONNECTED) {
-                    showNotification(`'${input.name ?? input.id}' connected!`);
-                }
-            }
+//             if (isMidiMessageEvent(event)) {
+//                 const pianoMessage = parsePianoMessage(event.message);
+//                 if (pianoMessage !== undefined) {
+//                     if (isNoteMessage(pianoMessage)) {
+//                         if (pianoMessage.isPressed()) {
+//                             // showNotification(pianoMessage.getNoteWithNameAndOctaveAndDynamic(), 1000);
+//                         }
+//                         if (pianoMessage.isPressed()) { 
+//                             audioSynth.keyPressed(pianoMessage.getNoteNumber(), pianoMessage.getVelocity());
+//                             if (isPlaybackStarted) {
+//                                 playerNotes.push({ note: pianoMessage.getNoteNumber(), timepoint: playbackTime });
+//                             }
+//                         } else {
+//                             audioSynth.keyReleased(pianoMessage.getNoteNumber());
+//                         }
+//                         pianoViz.updateKey(pianoMessage);
+//                     } else if (isSustainMessage(pianoMessage)) {
+//                         audioSynth.setSustainPedal(pianoMessage.isOn());
+//                         updateLoaderSustain(pianoMessage.getLevel());
+//                     }
+//                 }
+//             } else if (isMidiInputStateEvent(event)) {
+//                 if (event.state === MidiInputState.DISCONNECTED) {
+//                     showNotification(`'${input.name ?? input.id}' disconnected!`);
+//                     break;
+//                 } else if (event.state === MidiInputState.CONNECTED) {
+//                     showNotification(`'${input.name ?? input.id}' connected!`);
+//                 }
+//             }
+//         }
+//         await reader.close();
+//         populateMidiInputList(getInputNames(midiAccess));
+//     }
+// }
+
+function startMidiLoop() {
+    const access = midiAccess as MIDIAccess;
+    populateMidiInputList(getInputNames(access));
+    access.addEventListener("statechange", (event) => {
+        const connectionEvent = event as MIDIConnectionEvent;
+        populateMidiInputList(getInputNames(access));
+        if (connectionEvent.port && connectionEvent.port.state === "connected" && connectionEvent.port.connection === "open") {
+            showNotification(`'${connectionEvent.port.name ?? connectionEvent.port.id}' connected!`);
         }
-        await reader.close();
-        populateMidiInputList(getInputNames(midiAccess));
+        for (const input of access.inputs.values()) {
+            input.removeEventListener("midimessage", handleMidiInput);
+            input.addEventListener("midimessage", handleMidiInput);
+        }
+    });
+}
+
+function handleMidiInput(event: MIDIMessageEvent) {
+    const pianoMessage = parsePianoMessage(event);
+    if (pianoMessage !== undefined) {
+        if (isNoteMessage(pianoMessage)) {
+            if (pianoMessage.isPressed()) {
+                // showNotification(pianoMessage.getNoteWithNameAndOctaveAndDynamic(), 1000);
+            }
+            if (pianoMessage.isPressed()) { 
+                audioSynth.keyPressed(pianoMessage.getNoteNumber(), pianoMessage.getVelocity());
+                if (isPlaybackStarted) {
+                    playerNotes.push({ note: pianoMessage.getNoteNumber(), timepoint: playbackTime });
+                }
+            } else {
+                audioSynth.keyReleased(pianoMessage.getNoteNumber());
+            }
+            pianoViz.updateKey(pianoMessage);
+        } else if (isSustainMessage(pianoMessage)) {
+            audioSynth.setSustainPedal(pianoMessage.isOn());
+            updateLoaderSustain(pianoMessage.getLevel());
+        }
     }
 }
 
