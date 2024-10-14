@@ -170,6 +170,10 @@ onMidiInputChange((selectedInput) => {
 function startMidiLoop() {
     const access = midiAccess as MIDIAccess;
     populateMidiInputList(getInputNames(access));
+    for (const input of access.inputs.values()) {
+        input.removeEventListener("midimessage", handleMidiInput);
+        input.addEventListener("midimessage", handleMidiInput);
+    }
     access.addEventListener("statechange", (event) => {
         const connectionEvent = event as MIDIConnectionEvent;
         populateMidiInputList(getInputNames(access));
