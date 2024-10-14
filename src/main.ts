@@ -5,7 +5,7 @@ import './styles/controls.css';
 import './styles/toast.css';
 
 import { hideRequestMessage, showErrorMessage, showRequestMessage, toggleUI, populateMidiInputList, showNotification, updateLoaderSustain, onStartStopButtonClick, changeStartButtomTitle, updateScoreBar, populateMidiFileList, getSelectedMidiFile, onMidiInputChange } from "./ui.ts";
-import { browserSupportsMidi, checkMidiAccess, requestMidiAccess, MIDI_ACCESS_STATE, getInputNames, createMidiEventReader, waitForInput, MidiInputState, isMidiAccessGranted, isMidiMessageEvent, isMidiInputStateEvent } from "./midi.js";
+import { browserSupportsMidi, checkMidiAccess, requestMidiAccess, MIDI_ACCESS_STATE, getInputNames, isMidiAccessGranted } from "./midi.js";
 import { HexagonPianoVisualization } from "./piano-visualization.js";
 import { PianoSynthesizer } from "./audio-synthesis.js";
 import { browserSupportsAudioContext, AudioContextState } from "./audio-permissions.ts";
