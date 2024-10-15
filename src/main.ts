@@ -75,7 +75,7 @@ await setupAudioContext();
 
 // We're good to go!
 
-populateMidiFileList(['senbonzakura.mid', 'bad_apple.mid', 'perfect_math_re.mid', 'night_of_nights.mid', 'no_life_queen.mid', 'only_my_railgun.mid', 'syoushitsu.mid', 'lunatic_princess.mid', 'ode.mid', 'pirate.mid', 'queen.mid', 'chopin10no4.mid', 'chopin-ballade1.mid', 'never.mid', 'fantasie.mid']);
+populateMidiFileList(['senbonzakura.mid', 'bad_apple.mid', 'perfect_math_re.mid', 'night_of_nights.mid', 'no_life_queen.mid', 'only_my_railgun.mid', 'syoushitsu.mid', 'lunatic_princess.mid', 'ode.mid', 'pirate.mid', 'queen.mid', 'chopin10no4.mid', 'chopin25no5.mid', 'chopin25no11.mid', 'chopin-ballade1.mid', 'never.mid', 'fantasie.mid']);
 const pianoViz = new HexagonPianoVisualization("pianoVisualization");
 toggleUI(true);
 
