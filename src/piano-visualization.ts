@@ -54,6 +54,7 @@ export class HexagonPianoVisualization {
   private tiles: Tile[] = [];
   private hexRadius: number = 1;
   private scale: number = 1;
+  private hitEffects: HitEffect[] = [];
 
   constructor(canvasId: string) {
     this.canvas = document.getElementById(canvasId) as HTMLCanvasElement;
@@ -121,6 +122,17 @@ export class HexagonPianoVisualization {
     }
   }
 
+  addHitEffect(index: number) {
+    const tile = this.tiles[index];
+    this.hitEffects.push({
+      x: tile.x,
+      y: tile.y,
+      radius: tile.circumradius(),
+      alpha: 1,
+      scale: 1,
+    });
+  }
+
   drawTile(tile: Tile) {
     const modifier = (tile.intensity > 0 ? tile.intensity * 0.9 + 0.1 : 0) * this.scale;
     this.ctx.strokeStyle = 'rgba(255, 255, 255, 1.0)';
@@ -172,6 +184,7 @@ export class HexagonPianoVisualization {
   render(dt: number) {
     this.drawKeyboard();
     this.drawTimeTiles(dt);
+    this.drawHitEffects();
   }
 
   timeTiles: Map<string, TimeTile> = new Map();
@@ -208,6 +221,35 @@ export class HexagonPianoVisualization {
     }
     this.timeTiles.set(id, { timestamp, noteNumber, start, end, current: start });
   }
+
+  triggerHitEffect(noteNumber: number) {
+    const index = noteNumber;
+    if (index >= 0 && index < this.tiles.length) {
+      this.addHitEffect(index);
+    }
+  }
+
+  drawHitEffects() {
+    this.ctx.save();
+    for (let i = this.hitEffects.length - 1; i >= 0; i--) {
+      const effect = this.hitEffects[i];
+      this.ctx.beginPath();
+      this.ctx.arc(effect.x, effect.y, effect.radius * effect.scale, 0, Math.PI * 2);
+      this.ctx.strokeStyle = `rgba(255, 255, 255, ${effect.alpha})`;
+      this.ctx.lineWidth = 2 * this.scale;
+      this.ctx.stroke();
+
+      // Update effect properties
+      effect.alpha -= 0.02;
+      effect.scale += 0.05;
+
+      // Remove effect if it's faded out
+      if (effect.alpha <= 0) {
+        this.hitEffects.splice(i, 1);
+      }
+    }
+    this.ctx.restore();
+  }
 }
 
 interface TimeTile {
@@ -216,4 +258,12 @@ interface TimeTile {
   start: number;
   current: number;
   end: number;
+}
+
+interface HitEffect {
+  x: number;
+  y: number;
+  radius: number;
+  alpha: number;
+  scale: number;
 }

@@ -408,6 +408,7 @@ async function startPlaybackLoop() {
                 if (playerNote.note === note.number - 21 && Math.abs(note.noteOnTimepoint - playerNote.timepoint) <= 0.1) {
                     notesHit.add(noteId);
                     updateScoreBar(notesHit.size, totalNotes);
+                    pianoViz.triggerHitEffect(playerNote.note); // Add this line to trigger the hit effect
                 }
             }
         }
