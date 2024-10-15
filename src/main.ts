@@ -4,7 +4,23 @@ import './styles/loader.css';
 import './styles/controls.css';
 import './styles/toast.css';
 
-import { hideRequestMessage, showErrorMessage, showRequestMessage, toggleUI, populateMidiInputList, showNotification, updateLoaderSustain, onStartStopButtonClick, changeStartButtomTitle, updateScoreBar, populateMidiFileList, getSelectedMidiFile, onMidiInputChange } from "./ui.ts";
+import { 
+    hideRequestMessage, 
+    showErrorMessage, 
+    showRequestMessage, 
+    toggleUI, 
+    populateMidiInputList, 
+    showNotification, 
+    updateLoaderSustain, 
+    onStartStopButtonClick, 
+    changeStartButtomTitle, 
+    updateScoreBar, 
+    populateMidiFileList, 
+    getSelectedMidiFile, 
+    onMidiInputChange,
+    setupSpeedControl
+} from "./ui.ts";
+
 import { browserSupportsMidi, checkMidiAccess, requestMidiAccess, MIDI_ACCESS_STATE, getInputNames, isMidiAccessGranted } from "./midi.js";
 import { HexagonPianoVisualization } from "./piano-visualization.js";
 import { PianoSynthesizer } from "./audio-synthesis.js";
@@ -75,18 +91,56 @@ await setupAudioContext();
 
 // We're good to go!
 
-populateMidiFileList(['senbonzakura.mid', 'bad_apple.mid', 'perfect_math_re.mid', 'night_of_nights.mid', 'no_life_queen.mid', 'only_my_railgun.mid', 'syoushitsu.mid', 'lunatic_princess.mid', 'ode.mid', 'pirate.mid', 'queen.mid', 'chopin10no4.mid', 'chopin25no5.mid', 'chopin25no11.mid', 'chopin-ballade1.mid', 'never.mid', 'fantasie.mid']);
+populateMidiFileList([
+    'senbonzakura.mid',
+    'bad_apple.mid',
+    'perfect_math_re.mid',
+    'night_of_nights.mid',
+    'no_life_queen.mid',
+    'only_my_railgun.mid',
+    'syoushitsu.mid',
+    'lunatic_princess.mid',
+    'ode.mid',
+    'pirate.mid',
+    'queen.mid',
+    'chopin10no4.mid',
+    'chopin25no5.mid',
+    'chopin25no11.mid',
+    'chopin-ballade1.mid',
+    'never.mid',
+    'fantasie.mid'
+]);
+
 const pianoViz = new HexagonPianoVisualization("pianoVisualization");
+
+// TODO: this should be initializeUI and do initial work
 toggleUI(true);
 
 await new Promise(resolve => setTimeout(resolve, 100));
+
+let isPlaybackStarted = false;
+const playerNotes: { note: number, timepoint: number }[] = [];
+let playbackTime = -2;
+let playbackSpeed = 1;
+
+setupSpeedControl((speed) => {
+    playbackSpeed = speed;
+});
+
+// TODO: we're not really using this
+onMidiInputChange((selectedInput) => {
+    const input = Array.from(midiAccess.inputs.values()).find((input) => input.id === selectedInput || input.name === selectedInput);
+    if (input) {
+        console.log(input.name);
+    }
+});
 
 function startRenderLoop() {
     pianoViz.init();
     let lastTime = performance.now();
     const renderLoop = () => {
         const now = performance.now();
-        const dt = (now - lastTime) / 1000;
+        const dt = ((now - lastTime) / 1000) * playbackSpeed;
         lastTime = now;
         pianoViz.render(dt);
         requestAnimationFrame(renderLoop);
@@ -97,21 +151,10 @@ function startRenderLoop() {
 function startAudioLoop() {
     const audioLoop = () => {
         audioSynth.updateSustainedNotes();
-        setTimeout(audioLoop, 100);
+        setTimeout(audioLoop, 10);
     };
     audioLoop();
 }
-
-let isPlaybackStarted = false;
-const playerNotes: { note: number, timepoint: number }[] = [];
-let playbackTime = -2;
-
-onMidiInputChange((selectedInput) => {
-    const input = Array.from(midiAccess.inputs.values()).find((input) => input.id === selectedInput || input.name === selectedInput);
-    if (input) {
-        console.log(input.name);
-    }
-});
 
 // async function startMidiLoop() {
 //     if (!isMidiAccessGranted(midiAccess)) {
@@ -131,7 +174,7 @@ onMidiInputChange((selectedInput) => {
 //             if (event === undefined) {
 //                 continue;
 //             }
-    
+
 //             if (isMidiMessageEvent(event)) {
 //                 const pianoMessage = parsePianoMessage(event.message);
 //                 if (pianoMessage !== undefined) {
@@ -194,7 +237,7 @@ function handleMidiInput(event: MIDIMessageEvent) {
             if (pianoMessage.isPressed()) {
                 // showNotification(pianoMessage.getNoteWithNameAndOctaveAndDynamic(), 1000);
             }
-            if (pianoMessage.isPressed()) { 
+            if (pianoMessage.isPressed()) {
                 audioSynth.keyPressed(pianoMessage.getNoteNumber(), pianoMessage.getVelocity());
                 if (isPlaybackStarted) {
                     playerNotes.push({ note: pianoMessage.getNoteNumber(), timepoint: playbackTime });
@@ -244,7 +287,7 @@ async function startPlaybackLoop() {
                 sustainToTimelineMap.set(sustainTimelinePosition, [sustain]);
             } else {
                 sustainsAtTimepoint.push(sustain);
-            }    
+            }
         }
         return { timeline, noteToTimelineMap, sustainToTimelineMap, totalNotes };
     };
@@ -265,7 +308,7 @@ async function startPlaybackLoop() {
         const now = performance.now();
 
         if (!wasStarted) {
-            playbackTime = -5;
+            playbackTime = -2;
             startCursor = timeline.start;
             lastUpdateTime = now;
             activeNotes.clear();
@@ -279,7 +322,7 @@ async function startPlaybackLoop() {
 
         const deltaTime = (now - lastUpdateTime) / 1000;
         lastUpdateTime = now;
-        playbackTime += deltaTime;
+        playbackTime += deltaTime * playbackSpeed;
         const notesInWindow = [];
         const sustainsInWindow = [];
 
@@ -390,4 +433,3 @@ onStartStopButtonClick(() => {
     updateScoreBar(0, 1);
     startPlaybackLoop();
 });
-

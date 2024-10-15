@@ -139,17 +139,17 @@ export function changeStartButtomTitle(title: string) {
 export function updateScoreBar(score: number, maxScore: number) {
     const scoreBar = document.querySelector('.score-fill') as HTMLElement;
     const scoreText = document.querySelector('.score-text') as HTMLElement;
-    
+
     if (scoreBar && scoreText) {
-      const percentage = Math.min((score / maxScore) * 100, 100);
-      scoreBar.style.width = `${percentage}%`;
-      scoreText.textContent = `${score} hits`;
-      
-      // Add a pulsing effect when the score changes
-      scoreBar.classList.add('pulse');
-      setTimeout(() => {
-        scoreBar.classList.remove('pulse');
-      }, 300);
+        const percentage = Math.min((score / maxScore) * 100, 100);
+        scoreBar.style.width = `${percentage}%`;
+        scoreText.textContent = `${score} hits`;
+
+        // Add a pulsing effect when the score changes
+        scoreBar.classList.add('pulse');
+        setTimeout(() => {
+            scoreBar.classList.remove('pulse');
+        }, 300);
     }
 }
 
@@ -158,5 +158,16 @@ export function onMidiInputChange(callback: (selectedInput: string) => void) {
     select.addEventListener('change', (event) => {
         const selectedInput = (event.target as HTMLSelectElement).value;
         callback(selectedInput);
+    });
+}
+
+export function setupSpeedControl(onSpeedChange: (speed: number) => void) {
+    const speedSlider = document.getElementById('speedSlider') as HTMLInputElement;
+    const speedValue = document.getElementById('speedValue') as HTMLSpanElement;
+
+    speedSlider.addEventListener('input', () => {
+        const speed = parseFloat(speedSlider.value);
+        speedValue.textContent = `${speed.toFixed(1)}x`;
+        onSpeedChange(speed);
     });
 }
