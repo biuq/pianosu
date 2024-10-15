@@ -465,8 +465,10 @@ async function startPlaybackLoop() {
         }
 
         const nextBeatTime = calculateNextBeatTime(beatsElapsed, tempo) - playbackDelay;
-        if (isMetronomeEnabled && playbackTime >= nextBeatTime) {
-            metronome.tick(1000);
+        if (playbackTime >= nextBeatTime) {
+            if (isMetronomeEnabled) {
+                metronome.tick(1000);
+            }
             beatsElapsed++;
         }
     };
