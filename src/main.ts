@@ -212,7 +212,6 @@ function handleMidiInput(event: MIDIMessageEvent) {
 
 async function startPlaybackLoop() {
     const quantizerForPlayback = new IntegerTimeQuantizer({ resolution: 1000 }); // 1ms resolution for playback
-    const quantizerForGoodAccuracy = new IntegerTimeQuantizer({ resolution: 5 }); // 200ms score bucket
 
     const initialize = async () => {
         const midiFile = await fetch(getSelectedMidiFile() || '')
@@ -236,16 +235,6 @@ async function startPlaybackLoop() {
             }
             totalNotes++;
         }
-        const goodAccuracyMap = new Map<number, NoteEvent[]>();
-        for (const note of processedMidiFile.notes) {
-            const noteTimelinePosition = quantizerForGoodAccuracy.quantize(note.noteOnTimepoint);
-            const notesAtTimepoint = goodAccuracyMap.get(noteTimelinePosition);
-            if (!notesAtTimepoint) {
-                goodAccuracyMap.set(noteTimelinePosition, [note]);
-            } else {
-                notesAtTimepoint.push(note);
-            }
-        }
 
         const sustainToTimelineMap = new Map<number, SustainEvent[]>();
         for (const sustain of processedMidiFile.sustain) {
@@ -257,16 +246,16 @@ async function startPlaybackLoop() {
                 sustainsAtTimepoint.push(sustain);
             }    
         }
-        return { timeline, noteToTimelineMap, sustainToTimelineMap, totalNotes, goodAccuracyMap };
+        return { timeline, noteToTimelineMap, sustainToTimelineMap, totalNotes };
     };
 
-    const { timeline, noteToTimelineMap, sustainToTimelineMap, totalNotes, goodAccuracyMap } = await initialize();
+    const { timeline, noteToTimelineMap, sustainToTimelineMap, totalNotes } = await initialize();
     const activeNotes = new Map<number, NoteEvent>();
+    const notesHit = new Set<string>();
     let timeWindow = 2;
     let lastUpdateTime = performance.now();
     let startCursor = timeline.start;
     let wasStarted = false;
-    let score = 0;
 
     const playbackLoop = () => {
         if (!isPlaybackStarted) {
@@ -280,8 +269,8 @@ async function startPlaybackLoop() {
             startCursor = timeline.start;
             lastUpdateTime = now;
             activeNotes.clear();
+            notesHit.clear();
             wasStarted = true;
-            score = 0;
         }
 
         if (startCursor === undefined) {
@@ -365,15 +354,15 @@ async function startPlaybackLoop() {
             }
         }
 
-        for (const playerNote of playerNotes) {
-            const scorePos = quantizerForGoodAccuracy.quantize(playerNote.timepoint);
-            const notesAtTimepoint = goodAccuracyMap.get(scorePos);
-            if (notesAtTimepoint) {
-                for (const note of notesAtTimepoint) {
-                    if (note.number - 21 === playerNote.note) {
-                        score++;
-                        updateScoreBar(score, totalNotes);
-                    }
+        for (const note of notesInWindow) {
+            const noteId = `${note.number}-${quantizerForPlayback.quantize(note.noteOnTimepoint)}`;
+            if (notesHit.has(noteId)) {
+                continue;
+            }
+            for (const playerNote of playerNotes) {
+                if (playerNote.note === note.number - 21 && Math.abs(note.noteOnTimepoint - playerNote.timepoint) <= 0.1) {
+                    notesHit.add(noteId);
+                    updateScoreBar(notesHit.size, totalNotes);
                 }
             }
         }
