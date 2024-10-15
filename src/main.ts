@@ -58,7 +58,7 @@ if (!isMidiAccessGranted(midiAccess)) {
 }
 
 const audioSynth = new PianoSynthesizer();
-const playerAudioSynth = new PianoSynthesizer();
+const playerAudioSynth = new PianoSynthesizer(true);
 async function setupAudioContext() {
     let audioState = audioSynth.getAudioState();
     while (audioState !== AudioContextState.RUNNING) {
