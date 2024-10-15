@@ -27,8 +27,8 @@ import { HexagonPianoVisualization } from "./piano-visualization.js";
 import { MetronomeSynthesizer, PianoSynthesizer } from "./audio-synthesis.js";
 import { browserSupportsAudioContext, AudioContextState } from "./audio-permissions.ts";
 import { isNoteMessage, isSustainMessage, parsePianoMessage } from "./piano-engine.js";
-import { readMidiFile } from "./midi-file.ts";
-import { NoteEvent, processMidiFile, SetTempoBPMEvent, SustainEvent } from "./midi-file-processor.ts";
+import { beatsPerMinute, readMidiFile } from "./midi-file.ts";
+import { NoteEvent, processMidiFile, SetMetronomeSettingsEvent, SustainEvent } from "./midi-file-processor.ts";
 import { IntegerTimeQuantizer, Timeline } from './time.ts';
 
 if (!browserSupportsMidi()) {
@@ -126,7 +126,7 @@ let isPlaybackStarted = false;
 const playerNotes: { note: number, timepoint: number }[] = [];
 const PLAYBACK_START_DELAY = 2;
 let playbackSpeed = 1;
-let playbackTime = 0;
+let playbackTime = -PLAYBACK_START_DELAY;
 let isMetronomeEnabled = false;
 
 setupSpeedControl((speed) => {
@@ -265,27 +265,27 @@ function handleMidiInput(event: MIDIMessageEvent) {
 }
 
 async function startPlaybackLoop() {
-    const quantizerForPlayback = new IntegerTimeQuantizer({ resolution: 1000 }); // 1ms resolution for playback
-
+    const quantizerForPlayback = new IntegerTimeQuantizer({ resolution: 1000 });
     const initialize = async () => {
-        const midiFile = await fetch(getSelectedMidiFile() || '')
+        const rawMidiFile = await fetch(getSelectedMidiFile() || '')
             .then(res => res.arrayBuffer())
             .then(readMidiFile);
 
-        const processedMidiFile = processMidiFile(midiFile);
-        const timeline = new Timeline(processedMidiFile.timepoints.map(timepoint => quantizerForPlayback.quantize(timepoint)));
+        const midiFile = processMidiFile(rawMidiFile);
+        const timeline = new Timeline(midiFile.timepoints.map(timepoint => quantizerForPlayback.quantize(timepoint)));
         const noteToTimelineMap = new Map<number, NoteEvent[]>();
-        const setTempoToTimelineMap = new Map<number, SetTempoBPMEvent>();
+        const metronomeSettingsTimelineMap = new Map<number, SetMetronomeSettingsEvent>();
+
+        console.log(midiFile.metronome);
 
         let totalNotes = 0;
-        for (const note of processedMidiFile.notes) {
-            const noteTimelinePosition = quantizerForPlayback.quantize(note.noteOnTimepoint);
-            const notesAtTimepoint = noteToTimelineMap.get(noteTimelinePosition);
+        for (const note of midiFile.notes) {
+            const notesAtTimepoint = noteToTimelineMap.get(quantizerForPlayback.quantize(note.noteOnTimepoint));
             if (note.number < 21 || note.number > 108) {
                 continue;
             }
             if (!notesAtTimepoint) {
-                noteToTimelineMap.set(noteTimelinePosition, [note]);
+                noteToTimelineMap.set(quantizerForPlayback.quantize(note.noteOnTimepoint), [note]);
             } else {
                 notesAtTimepoint.push(note);
             }
@@ -293,7 +293,7 @@ async function startPlaybackLoop() {
         }
 
         const sustainToTimelineMap = new Map<number, SustainEvent[]>();
-        for (const sustain of processedMidiFile.sustain) {
+        for (const sustain of midiFile.sustain) {
             const sustainTimelinePosition = quantizerForPlayback.quantize(sustain.timepoint);
             const sustainsAtTimepoint = sustainToTimelineMap.get(sustainTimelinePosition);
             if (!sustainsAtTimepoint) {
@@ -303,31 +303,34 @@ async function startPlaybackLoop() {
             }
         }
 
-        for (const setTempo of processedMidiFile.setTempoEvents) {
-            const setTempoTimelinePosition = quantizerForPlayback.quantize(setTempo.timepoint);
-            setTempoToTimelineMap.set(setTempoTimelinePosition, setTempo);
+        for (const setMetronome of midiFile.metronome) {
+            metronomeSettingsTimelineMap.set(quantizerForPlayback.quantize(setMetronome.timepoint), setMetronome);
         }
-        return { timeline, noteToTimelineMap, sustainToTimelineMap, setTempoToTimelineMap, totalNotes };
+
+        return { midiFile, timeline, noteToTimelineMap, sustainToTimelineMap, metronomeSettingsTimelineMap, totalNotes };
     };
 
-    const { timeline, noteToTimelineMap, sustainToTimelineMap, setTempoToTimelineMap, totalNotes } = await initialize();
+    const { midiFile, timeline, noteToTimelineMap, sustainToTimelineMap, metronomeSettingsTimelineMap, totalNotes } = await initialize();
+    
     const activeNotes = new Map<number, NoteEvent>();
     const notesHit = new Set<string>();
+
     let timeWindow = 2;
     let lastUpdateTime = performance.now();
     let startCursor = timeline.start;
     let wasStarted = false;
-    let firstTempoEvent = Array.from(setTempoToTimelineMap.values()).sort((a, b) => a.timepoint - b.timepoint)[0];
-    let tempo = firstTempoEvent.bpm;
-    let beatsElapsed = 0;
-    const delayBetweenBeats = (tempo: number) => 60 / tempo;
-    function calculateNextBeatTime(beatsElapsed: number, tempo: number): number {
-        const beatInterval = delayBetweenBeats(tempo);
-        return beatsElapsed * beatInterval;
-    }
-    let delayBeats = Math.ceil(PLAYBACK_START_DELAY / delayBetweenBeats(tempo));
-    let playbackDelay = (delayBeats * delayBetweenBeats(tempo));
-    playbackTime = -playbackDelay;
+    let metronomeSettings = midiFile.metronome[0];
+    let lastBeatTimestamp = 0;
+
+    const getBeat = () => {
+        const bpm = beatsPerMinute(metronomeSettings.numberOfMidiClocksInMetronomeClick, metronomeSettings.tempoInMicrosecondsPerQuarterNote);
+        const beatInterval = 60 / bpm;
+        const referenceTime = metronomeSettings.timepoint;
+        const howManyBeats = Math.floor((playbackTime - referenceTime) / beatInterval);
+        const beatTime = howManyBeats * beatInterval + referenceTime;
+        const beatTimestamp = quantizerForPlayback.quantize(beatTime);
+        return { beatTime, beatTimestamp };
+    };
 
     const playbackLoop = () => {
         if (!isPlaybackStarted) {
@@ -339,12 +342,9 @@ async function startPlaybackLoop() {
         if (!wasStarted) {
             startCursor = timeline.start;
             lastUpdateTime = now;
-            let firstTempoEvent = Array.from(setTempoToTimelineMap.values()).sort((a, b) => a.timepoint - b.timepoint)[0];
-            tempo = firstTempoEvent.bpm;
-            beatsElapsed = 0;
-            delayBeats = Math.floor(PLAYBACK_START_DELAY / delayBetweenBeats(tempo));
-            playbackDelay = (delayBeats * delayBetweenBeats(tempo));
-            playbackTime = -playbackDelay;
+            playbackTime = -PLAYBACK_START_DELAY;
+            metronomeSettings = midiFile.metronome[0];
+            lastBeatTimestamp = getBeat().beatTimestamp;
             activeNotes.clear();
             notesHit.clear();
             wasStarted = true;
@@ -360,7 +360,7 @@ async function startPlaybackLoop() {
     
         const notesInWindow = [];
         const sustainsInWindow = [];
-        const tempoWindow = [];
+        const metronomeSettingsWindow = [];
 
         const startTimepoint = playbackTime - timeWindow;
         const endTimepoint = playbackTime + timeWindow;
@@ -395,9 +395,9 @@ async function startPlaybackLoop() {
                 }
             }
 
-            const setTempoAtTimepoint = setTempoToTimelineMap.get(endCursor.timestamp);
-            if (setTempoAtTimepoint) {
-                tempoWindow.push(setTempoAtTimepoint);
+            const metronomeSettingsAtTimepoint = metronomeSettingsTimelineMap.get(endCursor.timestamp);
+            if (metronomeSettingsAtTimepoint) {
+                metronomeSettingsWindow.push(metronomeSettingsAtTimepoint);
             }
 
             const next = endCursor.next();
@@ -423,14 +423,14 @@ async function startPlaybackLoop() {
             }
         }
 
-        let lastSustainLevel = 0;
+        let mostRecentSustainLevel = 0;
         for (const sustain of sustainsInWindow) {
             if (sustain.timepoint <= playbackTime) {
-                lastSustainLevel = sustain.level;
+                mostRecentSustainLevel = sustain.level;
             }
         }
-        audioSynth.setSustainPedal(lastSustainLevel > 0);
-        updateLoaderSustain(lastSustainLevel);
+        audioSynth.setSustainPedal(mostRecentSustainLevel > 0);
+        updateLoaderSustain(mostRecentSustainLevel);
 
         for (const note of notesInWindow) {
             if (playbackTime < note.noteOnTimepoint) {
@@ -453,23 +453,23 @@ async function startPlaybackLoop() {
         }
         playerNotes.length = 0;
 
-        let lastTempoEvent = undefined;
-        for (const tempoEvent of tempoWindow) {
-            if (tempoEvent.timepoint <= playbackTime) {
-                lastTempoEvent = tempoEvent;
+        let mostRecentMetronomeSettingsEvent = undefined;
+        for (const metronomeSettingsEvent of metronomeSettingsWindow) {
+            if (metronomeSettingsEvent.timepoint <= playbackTime) {
+                mostRecentMetronomeSettingsEvent = metronomeSettingsEvent;
             }
         }
-        if (lastTempoEvent && tempo !== lastTempoEvent.bpm) {
-            tempo = lastTempoEvent.bpm;
-            beatsElapsed = Math.floor((playbackTime + playbackDelay) / delayBetweenBeats(tempo));
+        if (mostRecentMetronomeSettingsEvent) {
+            metronomeSettings = mostRecentMetronomeSettingsEvent;
         }
 
-        const nextBeatTime = calculateNextBeatTime(beatsElapsed, tempo) - playbackDelay;
-        if (playbackTime >= nextBeatTime) {
+        const { beatTime, beatTimestamp } = getBeat();
+
+        if (playbackTime >= beatTime && lastBeatTimestamp !== beatTimestamp) {
             if (isMetronomeEnabled) {
                 metronome.tick(1000);
             }
-            beatsElapsed++;
+            lastBeatTimestamp = beatTimestamp;
         }
     };
 

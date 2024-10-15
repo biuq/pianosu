@@ -26,8 +26,8 @@ export interface Track {
 }
 
 export interface BaseMetaEvent {
-    readonly timestamp: number;
-    readonly deltaTime: number;
+    readonly ticks: number;
+    readonly deltaTicks: number;
     readonly type: MetaEventType;
 }
 
@@ -55,6 +55,11 @@ export interface EndOfTrackEvent extends BaseMetaEvent {
     readonly type: typeof META_EVENT_TYPE.END_OF_TRACK;
 }
 
+/**
+ * Set Tempo Event
+ * 
+ * @property microsecondsPerQuarterNote - The duration of one quarter note in microseconds.
+ */
 export interface SetTempoEvent extends BaseMetaEvent {
     readonly type: typeof META_EVENT_TYPE.SET_TEMPO;
     readonly microsecondsPerQuarterNote: number;
@@ -69,12 +74,21 @@ export interface SMPTEOffsetEvent extends BaseMetaEvent {
     readonly subframes: number;
 }
 
+/**
+ * Time Signature Event
+ * 
+ * @property numerator - How many notes specified by the denominator are in a bar.
+ * @property denominatorAsNegativePow2 - Indicates the note value that the signature is counting. Contrary to the name, the value itself is a non-negative number, but should be interpreted as a negative power of 2.
+ * @property numberOfMidiClocksInMetronomeClick - The number of MIDI clocks in a metronome click. The number of MIDI clocks in a quarter note is always 24. 
+ * Not to be confused with MIDI ticks. A value different than 24 means that the metronome will click on something different than a quarter note.
+ * @property howMany32ndNotesPerQuarterNote - The number of 32nd notes per quarter note. A 32nd note is the smallest note value in MIDI.
+ */
 export interface TimeSignatureEvent extends BaseMetaEvent {
     readonly type: typeof META_EVENT_TYPE.TIME_SIGNATURE;
     readonly numerator: number;
     readonly denominatorAsNegativePow2: number;
     readonly numberOfMidiClocksInMetronomeClick: number;
-    readonly thirtyTwoNdNotesPerQuarterNote: number;
+    readonly howMany32ndNotesPerQuarterNote: number;
 }
 
 export interface KeySignatureEvent extends BaseMetaEvent {
@@ -118,15 +132,15 @@ export const META_EVENT_TYPE = {
 } as const satisfies Record<string, MetaEventType>;
 
 export interface SysexEvent {
-    readonly timestamp: number;
-    readonly deltaTime: number;
+    readonly ticks: number;
+    readonly deltaTicks: number;
     readonly status: number;
     readonly data: ArrayBuffer;
 }
 
 export interface BaseMidiEvent {
-    readonly timestamp: number;
-    readonly deltaTime: number;
+    readonly ticks: number;
+    readonly deltaTicks: number;
     readonly type: MidiEventType;
     readonly channel: number;
 }
@@ -318,8 +332,8 @@ const readMidiTrack = (reader: Reader): Track => {
         switch (lastMidiCode) {
             case MidiEventType.NOTE_OFF.code:
                 midiEvents.push({
-                    timestamp: totalTicks,
-                    deltaTime,
+                    ticks: totalTicks,
+                    deltaTicks: deltaTime,
                     type: MidiEventType.NOTE_OFF,
                     channel: lastMidiChannel,
                     noteNumber: data1,
@@ -328,8 +342,8 @@ const readMidiTrack = (reader: Reader): Track => {
                 break;
             case MidiEventType.NOTE_ON.code:
                 midiEvents.push({
-                    timestamp: totalTicks,
-                    deltaTime,
+                    ticks: totalTicks,
+                    deltaTicks: deltaTime,
                     type: MidiEventType.NOTE_ON,
                     channel: lastMidiChannel,   
                     noteNumber: data1,
@@ -338,8 +352,8 @@ const readMidiTrack = (reader: Reader): Track => {
                 break;
             case MidiEventType.POLY_KEY_PRESSURE.code:
                 midiEvents.push({
-                    timestamp: totalTicks,
-                    deltaTime,
+                    ticks: totalTicks,
+                    deltaTicks: deltaTime,
                     type: MidiEventType.POLY_KEY_PRESSURE,
                     channel: lastMidiChannel,
                     noteNumber: data1,
@@ -348,8 +362,8 @@ const readMidiTrack = (reader: Reader): Track => {
                 break;
             case MidiEventType.CONTROL_CHANGE.code:
                 midiEvents.push({
-                    timestamp: totalTicks,
-                    deltaTime,
+                    ticks: totalTicks,
+                    deltaTicks: deltaTime,
                     type: MidiEventType.CONTROL_CHANGE,
                     channel: lastMidiChannel,
                     controller: data1,
@@ -358,8 +372,8 @@ const readMidiTrack = (reader: Reader): Track => {
                 break;
             case MidiEventType.PROGRAM_CHANGE.code:
                 midiEvents.push({
-                    timestamp: totalTicks,
-                    deltaTime,
+                    ticks: totalTicks,
+                    deltaTicks: deltaTime,
                     type: MidiEventType.PROGRAM_CHANGE,
                     channel: lastMidiChannel,
                     program: data1,
@@ -367,8 +381,8 @@ const readMidiTrack = (reader: Reader): Track => {
                 break;
             case MidiEventType.CHANNEL_PRESSURE.code:
                 midiEvents.push({
-                    timestamp: totalTicks,
-                    deltaTime,
+                    ticks: totalTicks,
+                    deltaTicks: deltaTime,
                     type: MidiEventType.CHANNEL_PRESSURE,
                     channel: lastMidiChannel,
                     pressure: data1,
@@ -376,8 +390,8 @@ const readMidiTrack = (reader: Reader): Track => {
                 break;
             case MidiEventType.PITCH_BEND.code:
                 midiEvents.push({
-                    timestamp: totalTicks,
-                    deltaTime,
+                    ticks: totalTicks,
+                    deltaTicks: deltaTime,
                     type: MidiEventType.PITCH_BEND,
                     channel: lastMidiChannel,
                     value: (data1 << 8) | data2,
@@ -399,8 +413,8 @@ const readMidiTrack = (reader: Reader): Track => {
             const sysexEventLength = trackReader.readVariableLengthQuantity();
             const sysexEventData = trackReader.readBuffer(sysexEventLength);
             const sysexEvent = {
-                timestamp: totalTicks,
-                deltaTime,
+                ticks: totalTicks,
+                deltaTicks: deltaTime,
                 status,
                 data: sysexEventData,
             } as SysexEvent;
@@ -437,8 +451,8 @@ const readMetaEvent = (reader: Reader, totalTicks: number, deltaTime: number): M
     switch (metaEventTypeCode) {
         case META_EVENT_TYPE.SEQUENCE_NUMBER.code:
             parsedMetaEvent = {
-                timestamp: totalTicks,
-                deltaTime,
+                ticks: totalTicks,
+                deltaTicks: deltaTime,
                 type: META_EVENT_TYPE.SEQUENCE_NUMBER,
                 number: new DataView(metaEventData).getUint16(0)
             };
@@ -453,32 +467,32 @@ const readMetaEvent = (reader: Reader, totalTicks: number, deltaTime: number): M
         case META_EVENT_TYPE.PROGRAM_NAME.code:
         case META_EVENT_TYPE.DEVICE_NAME.code:
             parsedMetaEvent = {
-                timestamp: totalTicks,
-                deltaTime,
+                ticks: totalTicks,
+                deltaTicks: deltaTime,
                 type: META_EVENT_TYPE.TEXT,
                 text: new TextDecoder().decode(metaEventData)
             };
             break;
         case META_EVENT_TYPE.MIDI_CHANNEL_PREFIX.code:
             parsedMetaEvent = {
-                timestamp: totalTicks,
-                deltaTime,
+                ticks: totalTicks,
+                deltaTicks: deltaTime,
                 type: META_EVENT_TYPE.MIDI_CHANNEL_PREFIX,
                 channel: new DataView(metaEventData).getUint8(0)
             };
             break;
         case META_EVENT_TYPE.MIDI_PORT.code:
             parsedMetaEvent = {
-                timestamp: totalTicks,
-                deltaTime,
+                ticks: totalTicks,
+                deltaTicks: deltaTime,
                 type: META_EVENT_TYPE.MIDI_PORT,
                 port: new DataView(metaEventData).getUint8(0)
             };
             break;
         case META_EVENT_TYPE.END_OF_TRACK.code:
             parsedMetaEvent = {
-                timestamp: totalTicks,
-                deltaTime,
+                ticks: totalTicks,
+                deltaTicks: deltaTime,
                 type: META_EVENT_TYPE.END_OF_TRACK,
             };
             break;
@@ -489,8 +503,8 @@ const readMetaEvent = (reader: Reader, totalTicks: number, deltaTime: number): M
             byte3 = new DataView(metaEventData).getUint8(2);
 
             parsedMetaEvent = {
-                timestamp: totalTicks,
-                deltaTime,
+                ticks: totalTicks,
+                deltaTicks: deltaTime,
                 type: META_EVENT_TYPE.SET_TEMPO,
                 microsecondsPerQuarterNote: (byte1 << 16) | (byte2 << 8) | byte3
             };
@@ -503,8 +517,8 @@ const readMetaEvent = (reader: Reader, totalTicks: number, deltaTime: number): M
             byte5 = new DataView(metaEventData).getUint8(4);
 
             parsedMetaEvent = {
-                timestamp: totalTicks,
-                deltaTime,
+                ticks: totalTicks,
+                deltaTicks: deltaTime,
                 type: META_EVENT_TYPE.SMPTE_OFFSET,
                 hours: byte1,
                 minutes: byte2,
@@ -520,13 +534,13 @@ const readMetaEvent = (reader: Reader, totalTicks: number, deltaTime: number): M
             byte4 = new DataView(metaEventData).getUint8(3);
 
             parsedMetaEvent = {
-                timestamp: totalTicks,
-                deltaTime,
+                ticks: totalTicks,
+                deltaTicks: deltaTime,
                 type: META_EVENT_TYPE.TIME_SIGNATURE,
                 numerator: byte1,
                 denominatorAsNegativePow2: byte2,
                 numberOfMidiClocksInMetronomeClick: byte3,
-                thirtyTwoNdNotesPerQuarterNote: byte4
+                howMany32ndNotesPerQuarterNote: byte4
             };
             break;
         case META_EVENT_TYPE.KEY_SIGNATURE.code:
@@ -534,8 +548,8 @@ const readMetaEvent = (reader: Reader, totalTicks: number, deltaTime: number): M
             byte2 = new DataView(metaEventData).getUint8(1);
 
             parsedMetaEvent = {
-                timestamp: totalTicks,
-                deltaTime,
+                ticks: totalTicks,
+                deltaTicks: deltaTime,
                 type: META_EVENT_TYPE.KEY_SIGNATURE,
                 flatsOrSharps: byte1,
                 isMinor: byte2 === 1,
@@ -543,16 +557,16 @@ const readMetaEvent = (reader: Reader, totalTicks: number, deltaTime: number): M
             break;
         case META_EVENT_TYPE.SEQUENCER_SPECIFIC_EVENT.code:
             parsedMetaEvent = {
-                timestamp: totalTicks,
-                deltaTime,
+                ticks: totalTicks,
+                deltaTicks: deltaTime,
                 type: META_EVENT_TYPE.SEQUENCER_SPECIFIC_EVENT,
                 data: metaEventData,
             };
             break;
         default:
             parsedMetaEvent = {
-                timestamp: totalTicks,
-                deltaTime,
+                ticks: totalTicks,
+                deltaTicks: deltaTime,
                 type: {code: metaEventTypeCode, name: 'Unknown'},
                 data: metaEventData,
             };
@@ -560,4 +574,29 @@ const readMetaEvent = (reader: Reader, totalTicks: number, deltaTime: number): M
     }
 
     return parsedMetaEvent;
+}
+
+export interface TimingSettings {
+    tempoInMicrosecondsPerQuarterNote: number;
+    numberOfTicksPerQuarterNote: number;
+}
+
+export const ticksToSeconds = (ticks: number, timingSettings: TimingSettings) => {
+    return (ticks * timingSettings.tempoInMicrosecondsPerQuarterNote) / (timingSettings.numberOfTicksPerQuarterNote * 1000000);
+};
+
+export const secondsToTicks = (seconds: number, timingSettings: TimingSettings) => {
+    return (seconds * timingSettings.numberOfTicksPerQuarterNote * 1000000) / timingSettings.tempoInMicrosecondsPerQuarterNote;
+};
+
+const MIDI_CLOCKS_PER_QUARTER_NOTE = 24;
+const NUMBER_OF_MICROSECONDS_IN_A_MINUTE = 60_000_000;
+
+export const beatIntervalInQuarterNotes = (numberOfMidiClocksInMetronomeClick: number) => {
+    return MIDI_CLOCKS_PER_QUARTER_NOTE / numberOfMidiClocksInMetronomeClick;
+}
+
+export const beatsPerMinute = (numberOfMidiClocksInMetronomeClick: number, tempoInMicrosecondsPerQuarterNote: number) => {
+    return (NUMBER_OF_MICROSECONDS_IN_A_MINUTE * numberOfMidiClocksInMetronomeClick) / 
+           (tempoInMicrosecondsPerQuarterNote * MIDI_CLOCKS_PER_QUARTER_NOTE);
 }
