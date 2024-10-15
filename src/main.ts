@@ -58,6 +58,7 @@ if (!isMidiAccessGranted(midiAccess)) {
 }
 
 const audioSynth = new PianoSynthesizer();
+const playerAudioSynth = new PianoSynthesizer();
 async function setupAudioContext() {
     let audioState = audioSynth.getAudioState();
     while (audioState !== AudioContextState.RUNNING) {
@@ -151,6 +152,7 @@ function startRenderLoop() {
 function startAudioLoop() {
     const audioLoop = () => {
         audioSynth.updateSustainedNotes();
+        playerAudioSynth.updateSustainedNotes();
         setTimeout(audioLoop, 10);
     };
     audioLoop();
@@ -238,16 +240,16 @@ function handleMidiInput(event: MIDIMessageEvent) {
                 // showNotification(pianoMessage.getNoteWithNameAndOctaveAndDynamic(), 1000);
             }
             if (pianoMessage.isPressed()) {
-                audioSynth.keyPressed(pianoMessage.getNoteNumber(), pianoMessage.getVelocity());
+                playerAudioSynth.keyPressed(pianoMessage.getNoteNumber(), pianoMessage.getVelocity());
                 if (isPlaybackStarted) {
                     playerNotes.push({ note: pianoMessage.getNoteNumber(), timepoint: playbackTime });
                 }
             } else {
-                audioSynth.keyReleased(pianoMessage.getNoteNumber());
+                playerAudioSynth.keyReleased(pianoMessage.getNoteNumber());
             }
             pianoViz.updateKey(pianoMessage);
         } else if (isSustainMessage(pianoMessage)) {
-            audioSynth.setSustainPedal(pianoMessage.isOn());
+            playerAudioSynth.setSustainPedal(pianoMessage.isOn());
             updateLoaderSustain(pianoMessage.getLevel());
         }
     }

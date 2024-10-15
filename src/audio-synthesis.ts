@@ -20,8 +20,9 @@ export class PianoSynthesizer {
   private fastReleaseTime: number;
   private slowReleaseTime: number;
   private minAudibleGain: number;
+  private isPlayer: boolean;
 
-  constructor() {
+  constructor(isPlayer: boolean = false) {
     this.audioContext = createAudioContext();
     this.activeVoices = new Map();
     this.masterGainNode = this.audioContext.createGain();
@@ -32,6 +33,7 @@ export class PianoSynthesizer {
     this.fastReleaseTime = 0.1; // Time for fast release (seconds)
     this.slowReleaseTime = 2.0; // Time for slow release (seconds)
     this.minAudibleGain = 0.001; // Threshold for removing inaudible notes
+    this.isPlayer = isPlayer;
   }
 
   getAudioState() {
@@ -56,20 +58,40 @@ export class PianoSynthesizer {
     const now = this.audioContext.currentTime;
 
     // Create multiple harmonics
-    const harmonics = [
-      { freq: fundamental, gain: 0.5 },
-      { freq: fundamental * 2, gain: 0.25 },
-      { freq: fundamental * 3, gain: 0.125 },
-      { freq: fundamental * 4, gain: 0.0625 },
-      { freq: fundamental * 5, gain: 0.03125 }
-    ];
-    
-    // Add some overtones
-    const overtones = [
-      { freq: fundamental * 1.25, gain: 0.0625 },
-      { freq: fundamental * 1.75, gain: 0.03125 },
-      { freq: fundamental * 2.25, gain: 0.015625 },
-    ];
+
+    let harmonics, overtones;
+
+    if (this.isPlayer) {
+      // More piano-like harmonics for player
+      harmonics = [
+        { freq: fundamental, gain: 0.7 },
+        { freq: fundamental * 2, gain: 0.2 },
+        { freq: fundamental * 3, gain: 0.06 },
+        { freq: fundamental * 4, gain: 0.02 },
+        { freq: fundamental * 5, gain: 0.005 }
+      ];
+      
+      overtones = [
+        { freq: fundamental * 1.5, gain: 0.01 },
+        { freq: fundamental * 2.5, gain: 0.005 },
+        { freq: fundamental * 3.5, gain: 0.0025 },
+      ];
+    } else {
+      // Original harmonics for non-player
+      harmonics = [
+        { freq: fundamental, gain: 0.5 },
+        { freq: fundamental * 2, gain: 0.25 },
+        { freq: fundamental * 3, gain: 0.125 },
+        { freq: fundamental * 4, gain: 0.0625 },
+        { freq: fundamental * 5, gain: 0.03125 }
+      ];
+      
+      overtones = [
+        { freq: fundamental * 1.25, gain: 0.0625 },
+        { freq: fundamental * 1.75, gain: 0.03125 },
+        { freq: fundamental * 2.25, gain: 0.015625 },
+      ];
+    }
 
     const oscillators = harmonics.concat(overtones).map(h => {
       const osc = this.audioContext.createOscillator();
