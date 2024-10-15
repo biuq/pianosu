@@ -171,3 +171,12 @@ export function setupSpeedControl(onSpeedChange: (speed: number) => void) {
         onSpeedChange(speed);
     });
 }
+
+export function setupMetronomeToggle(onMetronomeToggle: (enabled: boolean) => void) {
+    const metronomeToggle = document.getElementById('metronomeToggle') as HTMLInputElement;
+
+    metronomeToggle.addEventListener('change', () => {
+        const isEnabled = metronomeToggle.checked;
+        onMetronomeToggle(isEnabled);
+    });
+}

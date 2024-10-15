@@ -20,23 +20,52 @@ export interface SustainEvent {
     readonly level: number;
 }
 
+export interface SetTempoBPMEvent extends SetTempoEvent {
+    readonly bpm: number;
+    readonly timepoint: number;
+}
+
 export interface ProcessedMidiFile {
     readonly notes: NoteEvent[];
     readonly sustain: SustainEvent[];
+    readonly setTempoEvents: SetTempoBPMEvent[];
     readonly timepoints: number[];
 }
 
+const microsecondsPerMinute = 60_000_000;
+
+const microsecondsPerQuarterNoteToBPM = (microsecondsPerQuarterNote: number): number => {
+    return microsecondsPerMinute / microsecondsPerQuarterNote;
+};
+
+// TODO: We need to handle MIDI format 2 and process tracks separately,
+// so we can choose which track to play
 export const processMidiFile = (midiFile: MidiFile): ProcessedMidiFile => {
-    // if (midiFile.format !== 1) {
-    //     throw new Error("Only MIDI format 1 is supported");
-    // }
+    if (midiFile.format !== 0 && midiFile.format !== 1) {
+        throw new Error("Only MIDI format 0 and 1 are supported");
+    }
 
     const ticksPerQuarterNote = midiFile.ticksPerQuarterNote;
-    let tempoInMicrosecondsPerQuarterNote = 500000;
+    let tempoInMicrosecondsPerQuarterNote = 500000; // Default to 120 BPM
+    let firstTempoEventFound = false;
+
+    // First pass: find the first SET_TEMPO event
+    for (const track of midiFile.tracks) {
+        for (const event of track.metaEvents) {
+            if (event.type.code === META_EVENT_TYPE.SET_TEMPO.code) {
+                const setTempoEvent = event as SetTempoEvent;
+                tempoInMicrosecondsPerQuarterNote = setTempoEvent.microsecondsPerQuarterNote;
+                firstTempoEventFound = true;
+                break;
+            }
+        }
+        if (firstTempoEventFound) break;
+    }
 
     const timestamps = [];
     const metaEventsMap = new Map<number, MetaEvent[]>();
     const midiEventsMap = new Map<number, MidiEvent[]>();
+    const setTempoEventsMap = new Map<number, SetTempoBPMEvent>();
 
     for (const track of midiFile.tracks) {
         for (const event of track.metaEvents) {
@@ -74,10 +103,21 @@ export const processMidiFile = (midiFile: MidiFile): ProcessedMidiFile => {
         const time = ticksToSeconds(dt, ticksPerQuarterNote, tempoInMicrosecondsPerQuarterNote);
         totalTime += time;
         timepoints.push(totalTime);
+
         if (metaEvents) {
             for (const event of metaEvents) {
                 if (event.type.code === META_EVENT_TYPE.SET_TEMPO.code) {
                     const setTempoEvent = event as SetTempoEvent;
+                    const bpm = microsecondsPerQuarterNoteToBPM(setTempoEvent.microsecondsPerQuarterNote);
+                    const setTempoBPMEvent: SetTempoBPMEvent = {
+                        bpm: bpm,
+                        deltaTime: dt,
+                        microsecondsPerQuarterNote: setTempoEvent.microsecondsPerQuarterNote,
+                        timestamp: timestamp,
+                        type: META_EVENT_TYPE.SET_TEMPO,
+                        timepoint: totalTime
+                    };
+                    setTempoEventsMap.set(timestamp, setTempoBPMEvent);
                     tempoInMicrosecondsPerQuarterNote = setTempoEvent.microsecondsPerQuarterNote;
                 }
             }
@@ -131,9 +171,22 @@ export const processMidiFile = (midiFile: MidiFile): ProcessedMidiFile => {
 
         cursor = cursor.next();
     }
+
+    if (!firstTempoEventFound) {
+        setTempoEventsMap.set(0, {
+            microsecondsPerQuarterNote: tempoInMicrosecondsPerQuarterNote,
+            timestamp: 0,
+            deltaTime: 0,
+            type: META_EVENT_TYPE.SET_TEMPO,
+            bpm: microsecondsPerQuarterNoteToBPM(tempoInMicrosecondsPerQuarterNote),
+            timepoint: 0
+        });
+    }
+
     return {
         notes,
         sustain,
+        setTempoEvents: Array.from(setTempoEventsMap.values()),
         timepoints
     };
 };

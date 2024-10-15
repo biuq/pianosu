@@ -186,3 +186,72 @@
   font-size: 14px;
   text-shadow: 0 0 5px var(--neon-blue);
 }
+
+/* Add these styles at the end of the file */
+
+.neon-toggle-container {
+  display: flex;
+  align-items: center;
+  margin-left: 20px;
+}
+
+.neon-toggle-input {
+  display: none;
+}
+
+.neon-toggle-label {
+  display: inline-block;
+  width: 60px;
+  height: 30px;
+  background-color: var(--darker);
+  border-radius: 15px;
+  cursor: pointer;
+  position: relative;
+  transition: background-color 0.3s ease;
+}
+
+.neon-toggle-inner {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 15px;
+  border: 2px solid var(--neon-purple);
+  box-shadow: 0 0 10px var(--neon-purple),
+              inset 0 0 5px var(--neon-purple);
+  transition: all 0.3s ease;
+}
+
+.neon-toggle-switch {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 26px;
+  height: 26px;
+  background-color: var(--neon-purple);
+  border-radius: 50%;
+  transition: all 0.3s ease;
+  box-shadow: 0 0 10px var(--neon-purple);
+}
+
+.neon-toggle-input:checked + .neon-toggle-label .neon-toggle-inner {
+  border-color: var(--neon-blue);
+  box-shadow: 0 0 10px var(--neon-blue),
+              inset 0 0 5px var(--neon-blue);
+}
+
+.neon-toggle-input:checked + .neon-toggle-label .neon-toggle-switch {
+  transform: translateX(30px);
+  background-color: var(--neon-blue);
+  box-shadow: 0 0 10px var(--neon-blue);
+}
+
+.neon-toggle-text {
+  margin-left: 10px;
+  color: var(--text);
+  font-size: 14px;
+  text-shadow: 0 0 5px var(--neon-purple);
+}
+
+.neon-toggle-input:checked ~ .neon-toggle-text {
+  text-shadow: 0 0 5px var(--neon-blue);
+}

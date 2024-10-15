@@ -70,7 +70,7 @@ export class PianoSynthesizer {
         { freq: fundamental * 4, gain: 0.02 },
         { freq: fundamental * 5, gain: 0.005 }
       ];
-      
+
       overtones = [
         { freq: fundamental * 1.5, gain: 0.01 },
         { freq: fundamental * 2.5, gain: 0.005 },
@@ -85,7 +85,7 @@ export class PianoSynthesizer {
         { freq: fundamental * 4, gain: 0.0625 },
         { freq: fundamental * 5, gain: 0.03125 }
       ];
-      
+
       overtones = [
         { freq: fundamental * 1.25, gain: 0.0625 },
         { freq: fundamental * 1.75, gain: 0.03125 },
@@ -101,7 +101,7 @@ export class PianoSynthesizer {
       const oscGain = this.audioContext.createGain();
       // Apply a logarithmic velocity curve for more natural dynamics
       const velocityCurve = velocity / 127;
-      const scaledGain = h.gain * velocityCurve  * 0.5;
+      const scaledGain = h.gain * velocityCurve * 0.5;
       oscGain.gain.setValueAtTime(scaledGain, now);
 
       osc.connect(oscGain);
@@ -122,9 +122,9 @@ export class PianoSynthesizer {
 
     gainNode.connect(this.masterGainNode);
 
-    const voice: ActiveVoice = { 
-      oscillators, 
-      gainNode, 
+    const voice: ActiveVoice = {
+      oscillators,
+      gainNode,
       startTime: now,
       velocity,
       isHeld: true,
@@ -163,7 +163,7 @@ export class PianoSynthesizer {
   setSustainPedal(on: boolean) {
     const wasSustainOn = this.sustainPedalOn;
     this.sustainPedalOn = on;
-    
+
     if (!on && wasSustainOn) {
       // Pedal released: start fast fade out for all sustained notes
       for (const [_, voice] of this.activeVoices.entries()) {
@@ -205,6 +205,55 @@ export class PianoSynthesizer {
   }
 
   setMasterVolume(volume: number) {
+    this.masterGainNode.gain.setValueAtTime(volume, this.audioContext.currentTime);
+  }
+}
+
+
+export class MetronomeSynthesizer {
+  private audioContext: AudioContext;
+  private masterGainNode: GainNode;
+  private oscillator: OscillatorNode | null;
+  private gainNode: GainNode;
+
+  constructor() {
+    this.audioContext = createAudioContext();
+    this.masterGainNode = this.audioContext.createGain();
+    this.masterGainNode.connect(this.audioContext.destination);
+    this.oscillator = null;
+    this.gainNode = this.audioContext.createGain();
+    this.gainNode.connect(this.masterGainNode);
+  }
+
+  tick(frequency: number = 1000, duration: number = 0.1) {
+    const now = this.audioContext.currentTime;
+
+    // Create and configure oscillator
+    this.oscillator = this.audioContext.createOscillator();
+    this.oscillator.type = 'sine';
+    this.oscillator.frequency.setValueAtTime(frequency, now);
+
+    // Configure gain envelope
+    this.gainNode.gain.cancelScheduledValues(now);
+    this.gainNode.gain.setValueAtTime(0, now);
+    this.gainNode.gain.linearRampToValueAtTime(0.5, now + 0.001);
+    this.gainNode.gain.exponentialRampToValueAtTime(0.01, now + duration);
+
+    // Connect and start oscillator
+    this.oscillator.connect(this.gainNode);
+    this.oscillator.start(now);
+    this.oscillator.stop(now + duration);
+
+    // Clean up oscillator after it's done
+    this.oscillator.onended = () => {
+      if (this.oscillator) {
+        this.oscillator.disconnect();
+        this.oscillator = null;
+      }
+    };
+  }
+
+  setVolume(volume: number) {
     this.masterGainNode.gain.setValueAtTime(volume, this.audioContext.currentTime);
   }
 }

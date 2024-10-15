@@ -18,16 +18,17 @@ import {
     populateMidiFileList, 
     getSelectedMidiFile, 
     onMidiInputChange,
-    setupSpeedControl
+    setupSpeedControl,
+    setupMetronomeToggle
 } from "./ui.ts";
 
 import { browserSupportsMidi, checkMidiAccess, requestMidiAccess, MIDI_ACCESS_STATE, getInputNames, isMidiAccessGranted } from "./midi.js";
 import { HexagonPianoVisualization } from "./piano-visualization.js";
-import { PianoSynthesizer } from "./audio-synthesis.js";
+import { MetronomeSynthesizer, PianoSynthesizer } from "./audio-synthesis.js";
 import { browserSupportsAudioContext, AudioContextState } from "./audio-permissions.ts";
 import { isNoteMessage, isSustainMessage, parsePianoMessage } from "./piano-engine.js";
 import { readMidiFile } from "./midi-file.ts";
-import { NoteEvent, processMidiFile, SustainEvent } from "./midi-file-processor.ts";
+import { NoteEvent, processMidiFile, SetTempoBPMEvent, SustainEvent } from "./midi-file-processor.ts";
 import { IntegerTimeQuantizer, Timeline } from './time.ts';
 
 if (!browserSupportsMidi()) {
@@ -59,6 +60,8 @@ if (!isMidiAccessGranted(midiAccess)) {
 
 const audioSynth = new PianoSynthesizer();
 const playerAudioSynth = new PianoSynthesizer(true);
+const metronome = new MetronomeSynthesizer();
+
 async function setupAudioContext() {
     let audioState = audioSynth.getAudioState();
     while (audioState !== AudioContextState.RUNNING) {
@@ -121,11 +124,17 @@ await new Promise(resolve => setTimeout(resolve, 100));
 
 let isPlaybackStarted = false;
 const playerNotes: { note: number, timepoint: number }[] = [];
-let playbackTime = -2;
+const PLAYBACK_START_DELAY = 2;
 let playbackSpeed = 1;
+let playbackTime = 0;
+let isMetronomeEnabled = false;
 
 setupSpeedControl((speed) => {
     playbackSpeed = speed;
+});
+
+setupMetronomeToggle((enabled) => {
+    isMetronomeEnabled = enabled;
 });
 
 // TODO: we're not really using this
@@ -266,6 +275,8 @@ async function startPlaybackLoop() {
         const processedMidiFile = processMidiFile(midiFile);
         const timeline = new Timeline(processedMidiFile.timepoints.map(timepoint => quantizerForPlayback.quantize(timepoint)));
         const noteToTimelineMap = new Map<number, NoteEvent[]>();
+        const setTempoToTimelineMap = new Map<number, SetTempoBPMEvent>();
+
         let totalNotes = 0;
         for (const note of processedMidiFile.notes) {
             const noteTimelinePosition = quantizerForPlayback.quantize(note.noteOnTimepoint);
@@ -291,16 +302,32 @@ async function startPlaybackLoop() {
                 sustainsAtTimepoint.push(sustain);
             }
         }
-        return { timeline, noteToTimelineMap, sustainToTimelineMap, totalNotes };
+
+        for (const setTempo of processedMidiFile.setTempoEvents) {
+            const setTempoTimelinePosition = quantizerForPlayback.quantize(setTempo.timepoint);
+            setTempoToTimelineMap.set(setTempoTimelinePosition, setTempo);
+        }
+        return { timeline, noteToTimelineMap, sustainToTimelineMap, setTempoToTimelineMap, totalNotes };
     };
 
-    const { timeline, noteToTimelineMap, sustainToTimelineMap, totalNotes } = await initialize();
+    const { timeline, noteToTimelineMap, sustainToTimelineMap, setTempoToTimelineMap, totalNotes } = await initialize();
     const activeNotes = new Map<number, NoteEvent>();
     const notesHit = new Set<string>();
     let timeWindow = 2;
     let lastUpdateTime = performance.now();
     let startCursor = timeline.start;
     let wasStarted = false;
+    let firstTempoEvent = Array.from(setTempoToTimelineMap.values()).sort((a, b) => a.timepoint - b.timepoint)[0];
+    let tempo = firstTempoEvent.bpm;
+    let beatsElapsed = 0;
+    const delayBetweenBeats = (tempo: number) => 60 / tempo;
+    function calculateNextBeatTime(beatsElapsed: number, tempo: number): number {
+        const beatInterval = delayBetweenBeats(tempo);
+        return beatsElapsed * beatInterval;
+    }
+    let delayBeats = Math.ceil(PLAYBACK_START_DELAY / delayBetweenBeats(tempo));
+    let playbackDelay = (delayBeats * delayBetweenBeats(tempo));
+    playbackTime = -playbackDelay;
 
     const playbackLoop = () => {
         if (!isPlaybackStarted) {
@@ -310,9 +337,14 @@ async function startPlaybackLoop() {
         const now = performance.now();
 
         if (!wasStarted) {
-            playbackTime = -2;
             startCursor = timeline.start;
             lastUpdateTime = now;
+            let firstTempoEvent = Array.from(setTempoToTimelineMap.values()).sort((a, b) => a.timepoint - b.timepoint)[0];
+            tempo = firstTempoEvent.bpm;
+            beatsElapsed = 0;
+            delayBeats = Math.floor(PLAYBACK_START_DELAY / delayBetweenBeats(tempo));
+            playbackDelay = (delayBeats * delayBetweenBeats(tempo));
+            playbackTime = -playbackDelay;
             activeNotes.clear();
             notesHit.clear();
             wasStarted = true;
@@ -325,8 +357,10 @@ async function startPlaybackLoop() {
         const deltaTime = (now - lastUpdateTime) / 1000;
         lastUpdateTime = now;
         playbackTime += deltaTime * playbackSpeed;
+    
         const notesInWindow = [];
         const sustainsInWindow = [];
+        const tempoWindow = [];
 
         const startTimepoint = playbackTime - timeWindow;
         const endTimepoint = playbackTime + timeWindow;
@@ -359,6 +393,11 @@ async function startPlaybackLoop() {
                         sustainsInWindow.push(sustain);
                     }
                 }
+            }
+
+            const setTempoAtTimepoint = setTempoToTimelineMap.get(endCursor.timestamp);
+            if (setTempoAtTimepoint) {
+                tempoWindow.push(setTempoAtTimepoint);
             }
 
             const next = endCursor.next();
@@ -412,8 +451,24 @@ async function startPlaybackLoop() {
                 }
             }
         }
-
         playerNotes.length = 0;
+
+        let lastTempoEvent = undefined;
+        for (const tempoEvent of tempoWindow) {
+            if (tempoEvent.timepoint <= playbackTime) {
+                lastTempoEvent = tempoEvent;
+            }
+        }
+        if (lastTempoEvent && tempo !== lastTempoEvent.bpm) {
+            tempo = lastTempoEvent.bpm;
+            beatsElapsed = Math.floor((playbackTime + playbackDelay) / delayBetweenBeats(tempo));
+        }
+
+        const nextBeatTime = calculateNextBeatTime(beatsElapsed, tempo) - playbackDelay;
+        if (isMetronomeEnabled && playbackTime >= nextBeatTime) {
+            metronome.tick(1000);
+            beatsElapsed++;
+        }
     };
 
     const loop = () => {
