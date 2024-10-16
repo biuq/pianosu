@@ -7,7 +7,7 @@ export const createPianoMessage = (type: symbol, timestamp: number) => ({
     timestamp
 });
 
-export const createNoteMessage = (noteNumber: number, timestamp: number, velocity: number) => ({
+export const createNoteMessage = (noteNumber: number, timestamp: number, velocity: number, released: boolean) => ({
     ...createPianoMessage(PianoMessageType.NOTE, timestamp),
     getNoteNumber: () => noteNumber,
     getNoteNameWithOctave: () => {
@@ -35,7 +35,7 @@ export const createNoteMessage = (noteNumber: number, timestamp: number, velocit
     getNoteWithNameAndOctaveAndDynamic: function() {
         return `${this.getNoteNameWithOctave()} ${this.getDynamicMarking()}`;
     },
-    isPressed: () => velocity > 0
+    isPressed: () => velocity > 0 && !released,
 });
 
 export const createSustainMessage = (level: number, timestamp: number) => ({
@@ -80,7 +80,7 @@ export function parsePianoMessage(message: { data: Uint8Array | null, timeStamp:
             if (message.data.length < 3) return undefined;
             const noteNumber = message.data[1];
             const velocity = message.data[2];
-            return createNoteMessage((noteNumber - 21) % 88, timestamp, velocity);
+            return createNoteMessage((noteNumber - 21) % 88, timestamp, velocity, messageType === MidiVoiceMessageType.NOTE_OFF);
 
         case MidiVoiceMessageType.CONTROL_CHANGE:
             if (message.data.length < 3) return undefined;
