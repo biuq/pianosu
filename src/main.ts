@@ -27,7 +27,7 @@ import { HexagonPianoVisualization } from "./piano-visualization.js";
 import { MetronomeSynthesizer, PianoSynthesizer } from "./audio-synthesis.js";
 import { browserSupportsAudioContext, AudioContextState } from "./audio-permissions.ts";
 import { isNoteMessage, isSustainMessage, parsePianoMessage } from "./piano-engine.js";
-import { beatsPerMinute, readMidiFile } from "./midi-file.ts";
+import { beatTicks, readMidiFile, ticksToSeconds } from "./midi-file.ts";
 import { NoteEvent, processMidiFile, SetMetronomeSettingsEvent, SustainEvent } from "./midi-file-processor.ts";
 import { IntegerTimeQuantizer, Timeline } from './time.ts';
 
@@ -265,7 +265,7 @@ function handleMidiInput(event: MIDIMessageEvent) {
 }
 
 async function startPlaybackLoop() {
-    const quantizerForPlayback = new IntegerTimeQuantizer({ resolution: 1000 });
+    const quantizerForPlayback = new IntegerTimeQuantizer({ resolution: 10000 });
     const initialize = async () => {
         const rawMidiFile = await fetch(getSelectedMidiFile() || '')
             .then(res => res.arrayBuffer())
@@ -275,8 +275,6 @@ async function startPlaybackLoop() {
         const timeline = new Timeline(midiFile.timepoints.map(timepoint => quantizerForPlayback.quantize(timepoint)));
         const noteToTimelineMap = new Map<number, NoteEvent[]>();
         const metronomeSettingsTimelineMap = new Map<number, SetMetronomeSettingsEvent>();
-
-        console.log(midiFile.metronome);
 
         let totalNotes = 0;
         for (const note of midiFile.notes) {
@@ -319,17 +317,16 @@ async function startPlaybackLoop() {
     let lastUpdateTime = performance.now();
     let startCursor = timeline.start;
     let wasStarted = false;
-    let metronomeSettings = midiFile.metronome[0];
-    let lastBeatTimestamp = 0;
+    let currentMetronomeSettingsEvent = midiFile.metronome[0];
+    let lastBeatTime = 0;
 
     const getBeat = () => {
-        const bpm = beatsPerMinute(metronomeSettings.numberOfMidiClocksInMetronomeClick, metronomeSettings.tempoInMicrosecondsPerQuarterNote);
-        const beatInterval = 60 / bpm;
-        const referenceTime = metronomeSettings.timepoint;
+        const ticks = beatTicks(currentMetronomeSettingsEvent.numberOfTicksPerQuarterNote, currentMetronomeSettingsEvent.numberOfMidiClocksInMetronomeClick);
+        const beatInterval = ticksToSeconds(ticks, currentMetronomeSettingsEvent);
+        const referenceTime = currentMetronomeSettingsEvent.timepoint;
         const howManyBeats = Math.floor((playbackTime - referenceTime) / beatInterval);
         const beatTime = howManyBeats * beatInterval + referenceTime;
-        const beatTimestamp = quantizerForPlayback.quantize(beatTime);
-        return { beatTime, beatTimestamp };
+        return { beatTime, beatInterval };
     };
 
     const playbackLoop = () => {
@@ -343,8 +340,8 @@ async function startPlaybackLoop() {
             startCursor = timeline.start;
             lastUpdateTime = now;
             playbackTime = -PLAYBACK_START_DELAY;
-            metronomeSettings = midiFile.metronome[0];
-            lastBeatTimestamp = getBeat().beatTimestamp;
+            currentMetronomeSettingsEvent = midiFile.metronome[0];
+            lastBeatTime = getBeat().beatTime;
             activeNotes.clear();
             notesHit.clear();
             wasStarted = true;
@@ -460,16 +457,24 @@ async function startPlaybackLoop() {
             }
         }
         if (mostRecentMetronomeSettingsEvent) {
-            metronomeSettings = mostRecentMetronomeSettingsEvent;
+            if (
+                mostRecentMetronomeSettingsEvent.tempoInMicrosecondsPerQuarterNote !== currentMetronomeSettingsEvent.tempoInMicrosecondsPerQuarterNote
+                || mostRecentMetronomeSettingsEvent.numberOfMidiClocksInMetronomeClick !== currentMetronomeSettingsEvent.numberOfMidiClocksInMetronomeClick
+                || mostRecentMetronomeSettingsEvent.howManyNotesInBar !== currentMetronomeSettingsEvent.howManyNotesInBar
+                || mostRecentMetronomeSettingsEvent.noteLengthAsNegativePow2 !== currentMetronomeSettingsEvent.noteLengthAsNegativePow2
+                || mostRecentMetronomeSettingsEvent.howMany32ndNotesPerQuarterNote !== currentMetronomeSettingsEvent.howMany32ndNotesPerQuarterNote
+            ) {
+                currentMetronomeSettingsEvent = mostRecentMetronomeSettingsEvent;
+            }
         }
 
-        const { beatTime, beatTimestamp } = getBeat();
+        const { beatTime, beatInterval } = getBeat();
 
-        if (playbackTime >= beatTime && lastBeatTimestamp !== beatTimestamp) {
+        if (playbackTime >= beatTime && lastBeatTime + beatInterval <= playbackTime) {
             if (isMetronomeEnabled) {
                 metronome.tick(1000);
             }
-            lastBeatTimestamp = beatTimestamp;
+            lastBeatTime = beatTime;
         }
     };
 

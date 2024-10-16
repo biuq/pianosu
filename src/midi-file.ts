@@ -593,10 +593,14 @@ const MIDI_CLOCKS_PER_QUARTER_NOTE = 24;
 const NUMBER_OF_MICROSECONDS_IN_A_MINUTE = 60_000_000;
 
 export const beatIntervalInQuarterNotes = (numberOfMidiClocksInMetronomeClick: number) => {
-    return MIDI_CLOCKS_PER_QUARTER_NOTE / numberOfMidiClocksInMetronomeClick;
+    return numberOfMidiClocksInMetronomeClick / MIDI_CLOCKS_PER_QUARTER_NOTE;
 }
 
 export const beatsPerMinute = (numberOfMidiClocksInMetronomeClick: number, tempoInMicrosecondsPerQuarterNote: number) => {
     return (NUMBER_OF_MICROSECONDS_IN_A_MINUTE * numberOfMidiClocksInMetronomeClick) / 
            (tempoInMicrosecondsPerQuarterNote * MIDI_CLOCKS_PER_QUARTER_NOTE);
+}
+
+export const beatTicks = (numberOfTicksPerQuarterNote: number, numberOfMidiClocksInMetronomeClick: number) => {
+    return numberOfTicksPerQuarterNote * beatIntervalInQuarterNotes(numberOfMidiClocksInMetronomeClick);
 }

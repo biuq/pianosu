@@ -236,7 +236,7 @@ export class MetronomeSynthesizer {
     // Configure gain envelope
     this.gainNode.gain.cancelScheduledValues(now);
     this.gainNode.gain.setValueAtTime(0, now);
-    this.gainNode.gain.linearRampToValueAtTime(0.5, now + 0.001);
+    this.gainNode.gain.linearRampToValueAtTime(0.99, now + 0.001);
     this.gainNode.gain.exponentialRampToValueAtTime(0.01, now + duration);
 
     // Connect and start oscillator
