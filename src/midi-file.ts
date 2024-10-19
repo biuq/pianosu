@@ -576,17 +576,12 @@ const readMetaEvent = (reader: Reader, totalTicks: number, deltaTime: number): M
     return parsedMetaEvent;
 }
 
-export interface TimingSettings {
-    tempoInMicrosecondsPerQuarterNote: number;
-    numberOfTicksPerQuarterNote: number;
-}
-
-export const ticksToSeconds = (ticks: number, timingSettings: TimingSettings) => {
-    return (ticks * timingSettings.tempoInMicrosecondsPerQuarterNote) / (timingSettings.numberOfTicksPerQuarterNote * 1000000);
+export const ticksToSeconds = (ticks: number, tempoInMicrosecondsPerQuarterNote: number, numberOfTicksPerQuarterNote: number) => {
+    return (ticks * tempoInMicrosecondsPerQuarterNote) / (numberOfTicksPerQuarterNote * 1000000);
 };
 
-export const secondsToTicks = (seconds: number, timingSettings: TimingSettings) => {
-    return (seconds * timingSettings.numberOfTicksPerQuarterNote * 1000000) / timingSettings.tempoInMicrosecondsPerQuarterNote;
+export const secondsToTicks = (seconds: number, tempoInMicrosecondsPerQuarterNote: number, numberOfTicksPerQuarterNote: number) => {
+    return (seconds * numberOfTicksPerQuarterNote * 1000000) / tempoInMicrosecondsPerQuarterNote;
 };
 
 const MIDI_CLOCKS_PER_QUARTER_NOTE = 24;

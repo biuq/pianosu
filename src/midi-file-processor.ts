@@ -23,24 +23,29 @@ export interface SustainEvent {
     readonly level: number;
 }
 
-export interface SetMetronomeSettingsEvent {
+export interface TimeSignatureChange {
     readonly ticks: number;
     readonly timepoint: number;
-    readonly numberOfTicksPerQuarterNote: number;
-    readonly tempoInMicrosecondsPerQuarterNote: number;
     readonly howManyNotesInBar: number;
     readonly noteLengthAsNegativePow2: number;
     readonly numberOfMidiClocksInMetronomeClick: number;
     readonly howMany32ndNotesPerQuarterNote: number;
 }
 
-export interface ProcessedMidiFile {
-    readonly notes: NoteEvent[];
-    readonly sustain: SustainEvent[];
-    readonly metronome: SetMetronomeSettingsEvent[];
-    readonly timepoints: number[];
+export interface TempoChange {
+    readonly ticks: number;
+    readonly timepoint: number;
+    readonly tempoInMicrosecondsPerQuarterNote: number;
 }
 
+export interface ProcessedMidiFile {
+    readonly ticksPerQuarterNote: number;
+    readonly notes: NoteEvent[];
+    readonly sustain: SustainEvent[];
+    readonly tempo: TempoChange[];
+    readonly timeSignature: TimeSignatureChange[];
+    readonly timepoints: number[];
+}
 
 // TODO: We need to handle MIDI format 2 and process tracks separately,
 // so we can choose which track to play
@@ -50,40 +55,29 @@ export const processMidiFile = (midiFile: MidiFile): ProcessedMidiFile => {
         throw new Error("Only MIDI format 0 and 1 are supported");
     }
 
-    let metronomeSettings: SetMetronomeSettingsEvent = {
+    let tempo: TempoChange = {
         ticks: 0,
         timepoint: 0,
-        numberOfTicksPerQuarterNote: midiFile.ticksPerQuarterNote,
         tempoInMicrosecondsPerQuarterNote: 500000,
+    };
+
+    let timeSignature: TimeSignatureChange = {
+        ticks: 0,
+        timepoint: 0,
         howManyNotesInBar: 4,
-        noteLengthAsNegativePow2: 4,
+        noteLengthAsNegativePow2: 2,
         numberOfMidiClocksInMetronomeClick: 24,
         howMany32ndNotesPerQuarterNote: 8,
     };
 
-    // Find the first set tempo event and use it as initial tempo if exists
-    // let foundSetTempoEvent = false;
-    // for (const track of midiFile.tracks) {
-    //     for (const event of track.metaEvents) {
-    //         if (event.type.code === META_EVENT_TYPE.SET_TEMPO.code) {
-    //             const setTempoEvent = event as SetTempoEvent;
-    //             metronomeSettings = {
-    //                 ...metronomeSettings,
-    //                 tempoInMicrosecondsPerQuarterNote: setTempoEvent.microsecondsPerQuarterNote
-    //             };
-    //             foundSetTempoEvent = true;
-    //             break;
-    //         }
-    //     }
-    //     if (foundSetTempoEvent) {
-    //         break;
-    //     }
-    // }
-
     const ticks = [];
     const metaEventsMap = new Map<number, MetaEvent[]>();
     const midiEventsMap = new Map<number, MidiEvent[]>();
-    const setMetronomeSettingsEventMap = new Map<number, SetMetronomeSettingsEvent>();
+    const tempoChangeMap = new Map<number, TempoChange>();
+    const timeSignatureChangeMap = new Map<number, TimeSignatureChange>();
+
+    timeSignatureChangeMap.set(0, timeSignature);
+    tempoChangeMap.set(0, tempo);
 
     for (const track of midiFile.tracks) {
         for (const event of track.metaEvents) {
@@ -105,6 +99,7 @@ export const processMidiFile = (midiFile: MidiFile): ProcessedMidiFile => {
             array.push(event);
         }
     }
+
     const timeline = new Timeline(ticks);
     const activeNotes = new Map<number, {event: NoteOnEvent, timepoint: number}>();
     const notes: NoteEvent[] = [];
@@ -118,7 +113,7 @@ export const processMidiFile = (midiFile: MidiFile): ProcessedMidiFile => {
         const metaEvents = metaEventsMap.get(ticks);
         const midiEvents = midiEventsMap.get(ticks);
         const deltaTicks = ticks - (cursor.prev()?.timestamp ?? 0);
-        const time = ticksToSeconds(deltaTicks, metronomeSettings);
+        const time = ticksToSeconds(deltaTicks, tempo.tempoInMicrosecondsPerQuarterNote, midiFile.ticksPerQuarterNote);
         totalTime += time;
         timepoints.push(totalTime);
 
@@ -126,17 +121,15 @@ export const processMidiFile = (midiFile: MidiFile): ProcessedMidiFile => {
             for (const event of metaEvents) {
                 if (event.type.code === META_EVENT_TYPE.SET_TEMPO.code) {
                     const setTempoEvent = event as SetTempoEvent;
-                    metronomeSettings = {
-                        ...metronomeSettings,
+                    tempo = {
                         ticks: setTempoEvent.ticks,
                         timepoint: totalTime,
                         tempoInMicrosecondsPerQuarterNote: setTempoEvent.microsecondsPerQuarterNote
                     };
-                    setMetronomeSettingsEventMap.set(ticks, metronomeSettings);
+                    tempoChangeMap.set(ticks, tempo);
                 } else if (event.type.code === META_EVENT_TYPE.TIME_SIGNATURE.code) {
                     const timeSignatureEvent = event as TimeSignatureEvent;
-                    metronomeSettings = {
-                        ...metronomeSettings,
+                    timeSignature = {
                         ticks: timeSignatureEvent.ticks,
                         timepoint: totalTime,
                         howManyNotesInBar: timeSignatureEvent.numerator,
@@ -144,7 +137,7 @@ export const processMidiFile = (midiFile: MidiFile): ProcessedMidiFile => {
                         numberOfMidiClocksInMetronomeClick: timeSignatureEvent.numberOfMidiClocksInMetronomeClick,
                         howMany32ndNotesPerQuarterNote: timeSignatureEvent.howMany32ndNotesPerQuarterNote,
                     };
-                    setMetronomeSettingsEventMap.set(ticks, metronomeSettings);
+                    timeSignatureChangeMap.set(ticks, timeSignature);
                 }
             }
         }
@@ -203,14 +196,12 @@ export const processMidiFile = (midiFile: MidiFile): ProcessedMidiFile => {
         cursor = cursor.next();
     }
 
-    if (setMetronomeSettingsEventMap.size === 0) {
-        setMetronomeSettingsEventMap.set(0, metronomeSettings);
-    }
-
     return {
+        ticksPerQuarterNote: midiFile.ticksPerQuarterNote,
         notes,
         sustain,
-        metronome: Array.from(setMetronomeSettingsEventMap.values()).sort((a, b) => a.ticks - b.ticks),
+        tempo: Array.from(tempoChangeMap.values()).sort((a, b) => a.ticks - b.ticks),
+        timeSignature: Array.from(timeSignatureChangeMap.values()).sort((a, b) => a.ticks - b.ticks),
         timepoints
     };
 };

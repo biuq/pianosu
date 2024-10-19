@@ -5,7 +5,7 @@ export const MIDI_ACCESS_STATE = {
 } as const satisfies Record<string, string>;
 
 export function browserSupportsMidi() {
-    return "requestMIDIAccess" in navigator;
+    return typeof navigator !== 'undefined' && "requestMIDIAccess" in navigator;
 }
 
 export async function checkMidiAccess() {
@@ -25,7 +25,7 @@ export async function requestMidiAccess(): Promise<MidiAccessResult> {
             sysex: false
         });
         return midiAccess;
-    } catch(e) {
+    } catch (e) {
         return Promise.resolve(MIDI_ACCESS_STATE.DENIED);
     }
 }

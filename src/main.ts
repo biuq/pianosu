@@ -4,31 +4,43 @@ import './styles/loader.css';
 import './styles/controls.css';
 import './styles/toast.css';
 
-import { 
-    hideRequestMessage, 
-    showErrorMessage, 
-    showRequestMessage, 
-    toggleUI, 
-    populateMidiInputList, 
-    showNotification, 
-    updateLoaderSustain, 
-    onStartStopButtonClick, 
-    changeStartButtomTitle, 
-    updateScoreBar, 
-    populateMidiFileList, 
-    getSelectedMidiFile, 
+import {
+    hideRequestMessage,
+    showErrorMessage,
+    showRequestMessage,
+    toggleUI,
+    populateMidiInputList,
+    showNotification,
+    updateLoaderSustain,
+    onStartStopButtonClick,
+    changeStartButtomTitle,
+    updateScoreBar,
+    populateMidiFileList,
+    getSelectedMidiFile,
     onMidiInputChange,
     setupSpeedControl,
     setupMetronomeToggle
 } from "./ui.ts";
 
-import { browserSupportsMidi, checkMidiAccess, requestMidiAccess, MIDI_ACCESS_STATE, getInputNames, isMidiAccessGranted } from "./midi.js";
+import {
+    browserSupportsMidi,
+    checkMidiAccess,
+    requestMidiAccess,
+    MIDI_ACCESS_STATE,
+    getInputNames,
+    isMidiAccessGranted
+} from "./midi.js";
 import { HexagonPianoVisualization } from "./piano-visualization.js";
-import { MetronomeSynthesizer, PianoSynthesizer } from "./audio-synthesis.js";
-import { browserSupportsAudioContext, AudioContextState } from "./audio-permissions.ts";
+import {
+    MetronomeSynth,
+    PianoSynthesizer,
+    PianoSynth,
+    browserSupportsAudioContext,
+    MasterSynth
+} from "./audio-synthesis.js";
 import { isNoteMessage, isSustainMessage, parsePianoMessage } from "./piano-engine.js";
 import { beatTicks, readMidiFile, ticksToSeconds } from "./midi-file.ts";
-import { NoteEvent, processMidiFile, SetMetronomeSettingsEvent, SustainEvent } from "./midi-file-processor.ts";
+import { NoteEvent, processMidiFile, SustainEvent, TempoChange, TimeSignatureChange } from "./midi-file-processor.ts";
 import { IntegerTimeQuantizer, Timeline } from './time.ts';
 
 if (!browserSupportsMidi()) {
@@ -58,40 +70,21 @@ if (!isMidiAccessGranted(midiAccess)) {
     throw Error(errorMessage); // die here
 }
 
-const audioSynth = new PianoSynthesizer();
-const playerAudioSynth = new PianoSynthesizer(true);
-const metronome = new MetronomeSynthesizer();
+showRequestMessage("Please click anywhere to enable audio playback.");
+await new Promise<void>(resolve => {
+    const clickHandler = () => {
+        document.removeEventListener('click', clickHandler);
+        hideRequestMessage();
+        showNotification("Audio enabled!");
+        resolve();
+    };
+    document.addEventListener('click', clickHandler);
+});
 
-async function setupAudioContext() {
-    let audioState = audioSynth.getAudioState();
-    while (audioState !== AudioContextState.RUNNING) {
-        if (audioState === AudioContextState.CLOSED) {
-            const errorMessage = "Audio context is closed. Please refresh the page.";
-            showErrorMessage(errorMessage);
-            throw new Error(errorMessage);
-        }
-
-        showRequestMessage("Please click anywhere to enable audio playback.");
-
-        await new Promise<void>(resolve => {
-            const clickHandler = async () => {
-                document.removeEventListener('click', clickHandler);
-                audioState = await audioSynth.requestPermission();
-                if (audioState === AudioContextState.RUNNING) {
-                    hideRequestMessage();
-                    showNotification("Audio enabled!");
-                    resolve();
-                } else {
-                    showErrorMessage("Failed to enable audio. Please try again.");
-                }
-            };
-            document.addEventListener('click', clickHandler);
-        });
-    }
-
-    hideRequestMessage();
-}
-await setupAudioContext();
+const masterSynth = new MasterSynth()
+const audioSynth = new PianoSynth(masterSynth);
+const playerAudioSynth = new PianoSynth(masterSynth);
+const metronome = new MetronomeSynth(masterSynth);
 
 // We're good to go!
 
@@ -160,8 +153,8 @@ function startRenderLoop() {
 
 function startAudioLoop() {
     const audioLoop = () => {
-        audioSynth.updateSustainedNotes();
-        playerAudioSynth.updateSustainedNotes();
+        audioSynth.update();
+        playerAudioSynth.update();
         setTimeout(audioLoop, 10);
     };
     audioLoop();
@@ -274,7 +267,8 @@ async function startPlaybackLoop() {
         const midiFile = processMidiFile(rawMidiFile);
         const timeline = new Timeline(midiFile.timepoints.map(timepoint => quantizerForPlayback.quantize(timepoint)));
         const noteToTimelineMap = new Map<number, NoteEvent[]>();
-        const metronomeSettingsTimelineMap = new Map<number, SetMetronomeSettingsEvent>();
+        const tempoChangeMap = new Map<number, TempoChange>();
+        const timeSignatureChangeMap = new Map<number, TimeSignatureChange>();
 
         let totalNotes = 0;
         for (const note of midiFile.notes) {
@@ -301,15 +295,19 @@ async function startPlaybackLoop() {
             }
         }
 
-        for (const setMetronome of midiFile.metronome) {
-            metronomeSettingsTimelineMap.set(quantizerForPlayback.quantize(setMetronome.timepoint), setMetronome);
+        for (const tempo of midiFile.tempo) {
+            tempoChangeMap.set(quantizerForPlayback.quantize(tempo.timepoint), tempo);
         }
 
-        return { midiFile, timeline, noteToTimelineMap, sustainToTimelineMap, metronomeSettingsTimelineMap, totalNotes };
+        for (const timeSignature of midiFile.timeSignature) {
+            timeSignatureChangeMap.set(quantizerForPlayback.quantize(timeSignature.timepoint), timeSignature);
+        }
+
+        return { midiFile, timeline, noteToTimelineMap, sustainToTimelineMap, tempoChangeMap, timeSignatureChangeMap, totalNotes };
     };
 
-    const { midiFile, timeline, noteToTimelineMap, sustainToTimelineMap, metronomeSettingsTimelineMap, totalNotes } = await initialize();
-    
+    const { midiFile, timeline, noteToTimelineMap, sustainToTimelineMap, tempoChangeMap, timeSignatureChangeMap, totalNotes } = await initialize();
+
     const activeNotes = new Map<number, NoteEvent>();
     const notesHit = new Set<string>();
 
@@ -317,13 +315,14 @@ async function startPlaybackLoop() {
     let lastUpdateTime = performance.now();
     let startCursor = timeline.start;
     let wasStarted = false;
-    let currentMetronomeSettingsEvent = midiFile.metronome[0];
+    let currentTempo = midiFile.tempo[0];
+    let currentTimeSignature = midiFile.timeSignature[0];
     let lastBeatTime = 0;
 
     const getBeat = () => {
-        const ticks = beatTicks(currentMetronomeSettingsEvent.numberOfTicksPerQuarterNote, currentMetronomeSettingsEvent.numberOfMidiClocksInMetronomeClick);
-        const beatInterval = ticksToSeconds(ticks, currentMetronomeSettingsEvent);
-        const referenceTime = currentMetronomeSettingsEvent.timepoint;
+        const ticks = beatTicks(midiFile.ticksPerQuarterNote, currentTimeSignature.numberOfMidiClocksInMetronomeClick);
+        const beatInterval = ticksToSeconds(ticks, currentTempo.tempoInMicrosecondsPerQuarterNote, midiFile.ticksPerQuarterNote);
+        const referenceTime = currentTempo.timepoint;
         const howManyBeats = Math.floor((playbackTime - referenceTime) / beatInterval);
         const beatTime = howManyBeats * beatInterval + referenceTime;
         return { beatTime, beatInterval };
@@ -340,7 +339,8 @@ async function startPlaybackLoop() {
             startCursor = timeline.start;
             lastUpdateTime = now;
             playbackTime = -PLAYBACK_START_DELAY;
-            currentMetronomeSettingsEvent = midiFile.metronome[0];
+            currentTempo = midiFile.tempo[0];
+            currentTimeSignature = midiFile.timeSignature[0];
             lastBeatTime = getBeat().beatTime;
             activeNotes.clear();
             notesHit.clear();
@@ -354,10 +354,11 @@ async function startPlaybackLoop() {
         const deltaTime = (now - lastUpdateTime) / 1000;
         lastUpdateTime = now;
         playbackTime += deltaTime * playbackSpeed;
-    
+
         const notesInWindow = [];
         const sustainsInWindow = [];
-        const metronomeSettingsWindow = [];
+        const tempoWindow = [];
+        const timeSignatureWindow = [];
 
         const startTimepoint = playbackTime - timeWindow;
         const endTimepoint = playbackTime + timeWindow;
@@ -392,9 +393,14 @@ async function startPlaybackLoop() {
                 }
             }
 
-            const metronomeSettingsAtTimepoint = metronomeSettingsTimelineMap.get(endCursor.timestamp);
-            if (metronomeSettingsAtTimepoint) {
-                metronomeSettingsWindow.push(metronomeSettingsAtTimepoint);
+            const tempoAtTimepoint = tempoChangeMap.get(endCursor.timestamp);
+            if (tempoAtTimepoint) {
+                tempoWindow.push(tempoAtTimepoint);
+            }
+
+            const timeSignatureAtTimepoint = timeSignatureChangeMap.get(endCursor.timestamp);
+            if (timeSignatureAtTimepoint) {
+                timeSignatureWindow.push(timeSignatureAtTimepoint);
             }
 
             const next = endCursor.next();
@@ -450,22 +456,24 @@ async function startPlaybackLoop() {
         }
         playerNotes.length = 0;
 
-        let mostRecentMetronomeSettingsEvent = undefined;
-        for (const metronomeSettingsEvent of metronomeSettingsWindow) {
-            if (metronomeSettingsEvent.timepoint <= playbackTime) {
-                mostRecentMetronomeSettingsEvent = metronomeSettingsEvent;
+        let mostRecentTempoEvent = undefined;
+        for (const tempoEvent of tempoWindow) {
+            if (tempoEvent.timepoint <= playbackTime) {
+                mostRecentTempoEvent = tempoEvent;
             }
         }
-        if (mostRecentMetronomeSettingsEvent) {
-            if (
-                mostRecentMetronomeSettingsEvent.tempoInMicrosecondsPerQuarterNote !== currentMetronomeSettingsEvent.tempoInMicrosecondsPerQuarterNote
-                || mostRecentMetronomeSettingsEvent.numberOfMidiClocksInMetronomeClick !== currentMetronomeSettingsEvent.numberOfMidiClocksInMetronomeClick
-                || mostRecentMetronomeSettingsEvent.howManyNotesInBar !== currentMetronomeSettingsEvent.howManyNotesInBar
-                || mostRecentMetronomeSettingsEvent.noteLengthAsNegativePow2 !== currentMetronomeSettingsEvent.noteLengthAsNegativePow2
-                || mostRecentMetronomeSettingsEvent.howMany32ndNotesPerQuarterNote !== currentMetronomeSettingsEvent.howMany32ndNotesPerQuarterNote
-            ) {
-                currentMetronomeSettingsEvent = mostRecentMetronomeSettingsEvent;
+        if (mostRecentTempoEvent) {
+            currentTempo = mostRecentTempoEvent;
+        }
+
+        let mostRecentTimeSignatureEvent = undefined;
+        for (const timeSignatureEvent of timeSignatureWindow) {
+            if (timeSignatureEvent.timepoint <= playbackTime) {
+                mostRecentTimeSignatureEvent = timeSignatureEvent;
             }
+        }
+        if (mostRecentTimeSignatureEvent) {
+            currentTimeSignature = mostRecentTimeSignatureEvent;
         }
 
         const { beatTime, beatInterval } = getBeat();
@@ -496,5 +504,7 @@ onStartStopButtonClick(() => {
     isPlaybackStarted = !isPlaybackStarted;
     changeStartButtomTitle(isPlaybackStarted ? "STOP" : "START");
     updateScoreBar(0, 1);
-    startPlaybackLoop();
+    if (isPlaybackStarted) {
+        startPlaybackLoop();
+    }
 });

@@ -1,259 +1,223 @@
-import { createAudioContext, getAudioContextState, requestAudioPermission } from './audio-permissions.ts';
+import { IntegerTimeQuantizer } from "./time";
+import { pianoWavetable } from "./piano-wavetable";
 
-interface ActiveVoice {
-  oscillators: Array<{ osc: OscillatorNode; oscGain: GainNode }>;
-  gainNode: GainNode;
-  startTime: number;
-  velocity: number;
-  isHeld: boolean;
-  isSustained: boolean;
-  fadeOutStartTime?: number;
-  fadeOutDuration?: number;
+export function browserSupportsAudioContext() {
+    return typeof window !== 'undefined' && window.AudioContext;
 }
 
-export class PianoSynthesizer {
-  private audioContext: AudioContext;
-  private activeVoices: Map<number, ActiveVoice>;
-  private masterGainNode: GainNode;
-  private sustainPedalOn: boolean;
-  private pressedKeys: Set<number>;
-  private fastReleaseTime: number;
-  private slowReleaseTime: number;
-  private minAudibleGain: number;
-  private isPlayer: boolean;
+export class MasterSynth {
+    private readonly masterGainNode: GainNode;
+    private readonly compressorNode: DynamicsCompressorNode;
+    public readonly audioContext: AudioContext;
 
-  constructor(isPlayer: boolean = false) {
-    this.audioContext = createAudioContext();
-    this.activeVoices = new Map();
-    this.masterGainNode = this.audioContext.createGain();
-    this.masterGainNode.connect(this.audioContext.destination);
-    this.masterGainNode.gain.setValueAtTime(0.5, this.audioContext.currentTime);
-    this.sustainPedalOn = false;
-    this.pressedKeys = new Set();
-    this.fastReleaseTime = 0.1; // Time for fast release (seconds)
-    this.slowReleaseTime = 2.0; // Time for slow release (seconds)
-    this.minAudibleGain = 0.001; // Threshold for removing inaudible notes
-    this.isPlayer = isPlayer;
-  }
-
-  getAudioState() {
-    return getAudioContextState(this.audioContext);
-  }
-
-  async requestPermission() {
-    return await requestAudioPermission(this.audioContext);
-  }
-
-  noteNumberToFrequency(noteNumber: number) {
-    return 440 * Math.pow(2, (noteNumber + 21 - 69) / 12);
-  }
-
-  keyPressed(noteNumber: number, velocity: number) {
-    if (this.activeVoices.has(noteNumber)) {
-      this.releaseNote(noteNumber);
+    get masterNode(): AudioNode {
+        return this.masterGainNode;
     }
 
-    const fundamental = this.noteNumberToFrequency(noteNumber);
-    const gainNode = this.audioContext.createGain();
-    const now = this.audioContext.currentTime;
-
-    // Create multiple harmonics
-
-    let harmonics, overtones;
-
-    if (this.isPlayer) {
-      // More piano-like harmonics for player
-      harmonics = [
-        { freq: fundamental, gain: 0.7 },
-        { freq: fundamental * 2, gain: 0.2 },
-        { freq: fundamental * 3, gain: 0.06 },
-        { freq: fundamental * 4, gain: 0.02 },
-        { freq: fundamental * 5, gain: 0.005 }
-      ];
-
-      overtones = [
-        { freq: fundamental * 1.5, gain: 0.01 },
-        { freq: fundamental * 2.5, gain: 0.005 },
-        { freq: fundamental * 3.5, gain: 0.0025 },
-      ];
-    } else {
-      // Original harmonics for non-player
-      harmonics = [
-        { freq: fundamental, gain: 0.5 },
-        { freq: fundamental * 2, gain: 0.25 },
-        { freq: fundamental * 3, gain: 0.125 },
-        { freq: fundamental * 4, gain: 0.0625 },
-        { freq: fundamental * 5, gain: 0.03125 }
-      ];
-
-      overtones = [
-        { freq: fundamental * 1.25, gain: 0.0625 },
-        { freq: fundamental * 1.75, gain: 0.03125 },
-        { freq: fundamental * 2.25, gain: 0.015625 },
-      ];
+    constructor() {
+        this.audioContext = new window.AudioContext();
+        this.masterGainNode = this.audioContext.createGain();
+        this.compressorNode = this.audioContext.createDynamicsCompressor();
+        this.masterGainNode.connect(this.compressorNode);
+        this.compressorNode.connect(this.audioContext.destination);
     }
-
-    const oscillators = harmonics.concat(overtones).map(h => {
-      const osc = this.audioContext.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(h.freq, now);
-
-      const oscGain = this.audioContext.createGain();
-      // Apply a logarithmic velocity curve for more natural dynamics
-      const velocityCurve = velocity / 127;
-      const scaledGain = h.gain * velocityCurve * 0.5;
-      oscGain.gain.setValueAtTime(scaledGain, now);
-
-      osc.connect(oscGain);
-      oscGain.connect(gainNode);
-
-      osc.start(now);
-      return { osc, oscGain };
-    });
-
-    // Apply envelope
-    const attackTime = 0.52;
-    const decayTime = 0.3;
-    const sustainLevel = 0.7;
-
-    gainNode.gain.setValueAtTime(0, now);
-    gainNode.gain.linearRampToValueAtTime(1, now + attackTime);
-    gainNode.gain.linearRampToValueAtTime(sustainLevel, now + attackTime + decayTime);
-
-    gainNode.connect(this.masterGainNode);
-
-    const voice: ActiveVoice = {
-      oscillators,
-      gainNode,
-      startTime: now,
-      velocity,
-      isHeld: true,
-      isSustained: false
-    };
-    this.activeVoices.set(noteNumber, voice);
-    this.pressedKeys.add(noteNumber);
-    this.startNoteFadeOut(voice, this.slowReleaseTime);
-  }
-
-  keyReleased(noteNumber: number) {
-    this.pressedKeys.delete(noteNumber);
-    const voice = this.activeVoices.get(noteNumber);
-    if (voice) {
-      voice.isHeld = false;
-      if (!this.sustainPedalOn) {
-        this.startNoteFadeOut(voice, this.fastReleaseTime);
-      } else {
-        voice.isSustained = true;
-      }
-    }
-  }
-
-  startNoteFadeOut(voice: ActiveVoice, fadeTime: number) {
-    const now = this.audioContext.currentTime;
-    const currentGain = voice.gainNode.gain.value;
-    /** @type {GainNode} */
-    const gainNode = voice.gainNode;
-    gainNode.gain.cancelScheduledValues(now);
-    gainNode.gain.setValueAtTime(currentGain, now);
-    gainNode.gain.exponentialRampToValueAtTime(this.minAudibleGain, now + fadeTime);
-    voice.fadeOutStartTime = now;
-    voice.fadeOutDuration = fadeTime;
-  }
-
-  setSustainPedal(on: boolean) {
-    const wasSustainOn = this.sustainPedalOn;
-    this.sustainPedalOn = on;
-
-    if (!on && wasSustainOn) {
-      // Pedal released: start fast fade out for all sustained notes
-      for (const [_, voice] of this.activeVoices.entries()) {
-        if (!voice.isHeld && voice.isSustained) {
-          this.startNoteFadeOut(voice, this.fastReleaseTime);
-          voice.isSustained = false;
-        }
-      }
-    }
-  }
-
-  updateSustainedNotes() {
-    const now = this.audioContext.currentTime;
-    for (const [noteNumber, voice] of this.activeVoices.entries()) {
-      if (!voice.isHeld && !voice.isSustained && !voice.fadeOutStartTime) {
-        this.startNoteFadeOut(voice, this.slowReleaseTime);
-      }
-      if (voice.fadeOutStartTime !== undefined && voice.fadeOutDuration !== undefined) {
-        const elapsedTime = now - voice.fadeOutStartTime;
-        if (elapsedTime >= voice.fadeOutDuration) {
-          this.releaseNote(noteNumber);
-        }
-      }
-    }
-  }
-
-  releaseNote(noteNumber: number) {
-    const voice = this.activeVoices.get(noteNumber);
-    if (voice) {
-      const now = this.audioContext.currentTime;
-      voice.oscillators.forEach(osc => {
-        osc.osc.stop(now + 0.01);
-        osc.osc.disconnect();
-        osc.oscGain.disconnect();
-      });
-      voice.gainNode.disconnect();
-      this.activeVoices.delete(noteNumber);
-    }
-  }
-
-  setMasterVolume(volume: number) {
-    this.masterGainNode.gain.setValueAtTime(volume, this.audioContext.currentTime);
-  }
 }
 
+export class MetronomeSynth {
+    private oscillator: OscillatorNode | null;
+    private gainNode: GainNode;
 
-export class MetronomeSynthesizer {
-  private audioContext: AudioContext;
-  private masterGainNode: GainNode;
-  private oscillator: OscillatorNode | null;
-  private gainNode: GainNode;
-
-  constructor() {
-    this.audioContext = createAudioContext();
-    this.masterGainNode = this.audioContext.createGain();
-    this.masterGainNode.connect(this.audioContext.destination);
-    this.oscillator = null;
-    this.gainNode = this.audioContext.createGain();
-    this.gainNode.connect(this.masterGainNode);
-  }
-
-  tick(frequency: number = 1000, duration: number = 0.1) {
-    const now = this.audioContext.currentTime;
-
-    // Create and configure oscillator
-    this.oscillator = this.audioContext.createOscillator();
-    this.oscillator.type = 'sine';
-    this.oscillator.frequency.setValueAtTime(frequency, now);
-
-    // Configure gain envelope
-    this.gainNode.gain.cancelScheduledValues(now);
-    this.gainNode.gain.setValueAtTime(0, now);
-    this.gainNode.gain.linearRampToValueAtTime(0.99, now + 0.001);
-    this.gainNode.gain.exponentialRampToValueAtTime(0.01, now + duration);
-
-    // Connect and start oscillator
-    this.oscillator.connect(this.gainNode);
-    this.oscillator.start(now);
-    this.oscillator.stop(now + duration);
-
-    // Clean up oscillator after it's done
-    this.oscillator.onended = () => {
-      if (this.oscillator) {
-        this.oscillator.disconnect();
+    constructor(private readonly master: MasterSynth) {
         this.oscillator = null;
-      }
-    };
-  }
+        this.gainNode = master.audioContext.createGain();
+        this.gainNode.connect(master.masterNode);
+    }
 
-  setVolume(volume: number) {
-    this.masterGainNode.gain.setValueAtTime(volume, this.audioContext.currentTime);
-  }
+    tick(frequency: number = 1000, duration: number = 0.1) {
+        const now = this.master.audioContext.currentTime;
+
+        // Create and configure oscillator
+        this.oscillator = this.master.audioContext.createOscillator();
+        this.oscillator.type = 'sine';
+        this.oscillator.frequency.setValueAtTime(frequency, now);
+
+        // Configure gain envelope
+        this.gainNode.gain.cancelScheduledValues(now);
+        this.gainNode.gain.setValueAtTime(0, now);
+        this.gainNode.gain.linearRampToValueAtTime(5, now + 0.001);
+        this.gainNode.gain.exponentialRampToValueAtTime(0.01, now + duration);
+
+        // Connect and start oscillator
+        this.oscillator.connect(this.gainNode);
+        this.oscillator.start(now);
+        this.oscillator.stop(now + duration);
+
+        // Clean up oscillator after it's done
+        this.oscillator.onended = () => {
+            if (this.oscillator) {
+                this.oscillator.disconnect();
+                this.oscillator = null;
+            }
+        };
+    }
+}
+
+interface ActiveNote {
+    id: string;
+    startTime: number;
+    mustBePlayedTime: number;
+    oscillator: OscillatorNode;
+    gainNode: GainNode;
+    sustain: boolean;
+}
+
+export class PianoSynth {
+    private readonly quantizer = new IntegerTimeQuantizer({resolution: 1000});
+    private readonly activeNotes: Map<number, ActiveNote> = new Map();
+    private readonly releasedNotes: Map<string, ActiveNote> = new Map();
+    private readonly fadingNotes: Map<string, ActiveNote> = new Map();
+    private readonly pianoWave: PeriodicWave;
+    private sustainIsOn = false;
+
+    constructor(private readonly master: MasterSynth) {
+        this.pianoWave = this.master.audioContext.createPeriodicWave(pianoWavetable.real, pianoWavetable.imag);
+    }
+
+    keyPressed(noteNumber: number, velocity: number) {
+        const currentNote = this.activeNotes.get(noteNumber);
+        if (currentNote) {
+            this.releasedNotes.set(currentNote.id, currentNote);
+            this.activeNotes.delete(noteNumber);
+        }
+        const now = this.master.audioContext.currentTime;
+        const oscillator = new OscillatorNode(this.master.audioContext, {periodicWave: this.pianoWave, type: 'custom', frequency: this.noteNumberToFrequency(noteNumber)});
+        const { gainNode, mustBePlayedTime } = this.createEnvelope(velocity);
+        oscillator.connect(gainNode);
+        gainNode.connect(this.master.masterNode);
+        oscillator.start();
+
+        const note: ActiveNote = {
+            id: `${noteNumber}-${this.quantizer.quantize(now)}`,
+            startTime: now,
+            mustBePlayedTime: mustBePlayedTime,
+            oscillator,
+            gainNode,
+            sustain: false,
+        };
+        this.activeNotes.set(noteNumber, note);
+    }
+
+    keyReleased(noteNumber: number) {
+        const currentNote = this.activeNotes.get(noteNumber);
+        if (currentNote) {
+            this.releasedNotes.set(currentNote.id, currentNote);
+            this.activeNotes.delete(noteNumber);
+            if (this.sustainIsOn) {
+                currentNote.sustain = true;
+            }
+        }
+    }
+
+    setSustainPedal(on: boolean) {
+        const released = this.sustainIsOn && !on;
+        this.sustainIsOn = on;
+        if (released) {
+            for (const note of this.releasedNotes.values()) {
+                note.sustain = false;
+            }
+        }
+    }
+
+    update() {
+        const now = this.master.audioContext.currentTime;
+        const releaseNotesToFade = [];
+        const releaseNotesToStop = [];
+        const activeNotesToRemove = [];
+        const fadingNotesToRemove = [];
+        const notesToStop = [];
+
+        for (const [noteNumber, note] of this.activeNotes.entries()) {
+            if (note.gainNode.gain.value <= 0.0001 && note.mustBePlayedTime <= now) {
+                activeNotesToRemove.push(noteNumber);
+                notesToStop.push(note);
+            }
+        }
+        for (const noteNumber of activeNotesToRemove) {
+            const note = this.activeNotes.get(noteNumber);
+            if (note) {
+                this.activeNotes.delete(noteNumber);
+            }
+        }
+
+        for (const [id, note] of this.releasedNotes.entries()) {
+            if (note.mustBePlayedTime <= now && !note.sustain) {
+                releaseNotesToFade.push(id);
+            } else if (note.gainNode.gain.value <= 0.0001 && note.mustBePlayedTime <= now) {
+                releaseNotesToStop.push(id);
+            }
+        }
+        for (const noteNumber of releaseNotesToFade) {
+            const note = this.releasedNotes.get(noteNumber);
+            if (note) {
+                this.sustainStop(note);
+                this.releasedNotes.delete(noteNumber);
+                this.fadingNotes.set(noteNumber, note);
+            }
+        }
+        for (const id of releaseNotesToStop) {
+            const note = this.releasedNotes.get(id);
+            if (note) {
+                this.releasedNotes.delete(id);
+                notesToStop.push(note);
+            }
+        }
+        for (const [id, note] of this.fadingNotes.entries()) {
+            if (note.gainNode.gain.value <= 0.0001) {
+                fadingNotesToRemove.push(id);
+                notesToStop.push(note);
+            }
+        }
+        for (const id of fadingNotesToRemove) {
+            const note = this.fadingNotes.get(id);
+            if (note) {
+                this.fadingNotes.delete(id);
+            }
+        }
+
+        for (const note of notesToStop) {
+            note.oscillator.stop();
+            note.oscillator.disconnect();
+            note.gainNode.gain.cancelScheduledValues(now);
+            note.gainNode.disconnect();
+        }
+    }
+
+    private createEnvelope(velocity: number) {
+        const normalizedVelocity = Math.max(0.05, velocity / 120);
+        const maxGain = 0.5 * normalizedVelocity;
+        const targetGain = 0.45 * normalizedVelocity;
+        const ATTACK_TIME = 0.025;
+        const DECAY_TIME = 0.1;
+        
+        const now = this.master.audioContext.currentTime;
+        const gainNode = this.master.audioContext.createGain();
+        gainNode.gain.setValueAtTime(0, now);
+        gainNode.gain.linearRampToValueAtTime(maxGain, now + ATTACK_TIME);
+        gainNode.gain.linearRampToValueAtTime(targetGain, now + ATTACK_TIME + DECAY_TIME);
+        gainNode.gain.setTargetAtTime(0, now + ATTACK_TIME + DECAY_TIME, 0.2);
+        const mustBePlayedTime = now + ATTACK_TIME;
+
+        return { gainNode, mustBePlayedTime };
+    }
+
+    private sustainStop(note: ActiveNote) {
+        const now = this.master.audioContext.currentTime;
+        const fadeTimeConstant = 0.1;
+        note.gainNode.gain.cancelScheduledValues(now);
+        note.gainNode.gain.setTargetAtTime(0, now, fadeTimeConstant);
+    }
+
+    private noteNumberToFrequency(noteNumber: number) {
+        return 440 * Math.pow(2, (noteNumber + 21 - 69) / 12);
+    }
 }

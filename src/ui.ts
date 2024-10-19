@@ -179,4 +179,6 @@ export function setupMetronomeToggle(onMetronomeToggle: (enabled: boolean) => vo
         const isEnabled = metronomeToggle.checked;
         onMetronomeToggle(isEnabled);
     });
+
+    onMetronomeToggle(metronomeToggle.checked);
 }
