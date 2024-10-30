@@ -1,4 +1,4 @@
-import { IntegerTimeQuantizer } from "./time";
+import { IntegerTimeQuantizer } from "./timeline";
 import { pianoWavetable } from "./piano-wavetable";
 
 export function browserSupportsAudioContext() {
@@ -33,7 +33,7 @@ export class MetronomeSynth {
         this.gainNode.connect(master.masterNode);
     }
 
-    tick(frequency: number = 1000, duration: number = 0.1) {
+    click(frequency: number = 1000, duration: number = 0.1) {
         const now = this.master.audioContext.currentTime;
 
         // Create and configure oscillator
@@ -193,10 +193,10 @@ export class PianoSynth {
     }
 
     private createEnvelope(velocity: number) {
-        const normalizedVelocity = Math.max(0.05, velocity / 120);
+        const normalizedVelocity = Math.max(0.05, velocity / 127);
         const maxGain = 0.5 * normalizedVelocity;
         const targetGain = 0.45 * normalizedVelocity;
-        const ATTACK_TIME = 0.025;
+        const ATTACK_TIME = 0.01 * (1 - normalizedVelocity);
         const DECAY_TIME = 0.1;
         
         const now = this.master.audioContext.currentTime;

@@ -33,7 +33,6 @@ import {
 import { HexagonPianoVisualization } from "./piano-visualization.js";
 import {
     MetronomeSynth,
-    PianoSynthesizer,
     PianoSynth,
     browserSupportsAudioContext,
     MasterSynth
@@ -41,7 +40,8 @@ import {
 import { isNoteMessage, isSustainMessage, parsePianoMessage } from "./piano-engine.js";
 import { beatTicks, readMidiFile, ticksToSeconds } from "./midi-file.ts";
 import { NoteEvent, processMidiFile, SustainEvent, TempoChange, TimeSignatureChange } from "./midi-file-processor.ts";
-import { IntegerTimeQuantizer, Timeline } from './time.ts';
+import { quantize, createTempoTimeline } from './tempo-timeline.ts';
+import { createTimeSignatureTimeline } from './time-signature-timeline.ts';
 
 if (!browserSupportsMidi()) {
     const errorMessage = "Sorry, your browser does not support MIDI. Try a different browser.";
@@ -258,75 +258,51 @@ function handleMidiInput(event: MIDIMessageEvent) {
 }
 
 async function startPlaybackLoop() {
-    const quantizerForPlayback = new IntegerTimeQuantizer({ resolution: 10000 });
     const initialize = async () => {
         const rawMidiFile = await fetch(getSelectedMidiFile() || '')
             .then(res => res.arrayBuffer())
             .then(readMidiFile);
 
         const midiFile = processMidiFile(rawMidiFile);
-        const timeline = new Timeline(midiFile.timepoints.map(timepoint => quantizerForPlayback.quantize(timepoint)));
-        const noteToTimelineMap = new Map<number, NoteEvent[]>();
-        const tempoChangeMap = new Map<number, TempoChange>();
-        const timeSignatureChangeMap = new Map<number, TimeSignatureChange>();
+        const noteToTicksMap = new Map<number, NoteEvent[]>();
+        const tempoTimeline = createTempoTimeline(midiFile.ticksPerQuarterNote, midiFile.tempo);
+        const timeSignatureTimeline = createTimeSignatureTimeline(midiFile.ticksPerQuarterNote, midiFile.timeSignature);
 
         let totalNotes = 0;
         for (const note of midiFile.notes) {
-            const notesAtTimepoint = noteToTimelineMap.get(quantizerForPlayback.quantize(note.noteOnTimepoint));
+            const notesAtTicks = noteToTicksMap.get(note.noteOnTicks);
             if (note.number < 21 || note.number > 108) {
                 continue;
             }
-            if (!notesAtTimepoint) {
-                noteToTimelineMap.set(quantizerForPlayback.quantize(note.noteOnTimepoint), [note]);
+            if (!notesAtTicks) {
+                noteToTicksMap.set(note.noteOnTicks, [note]);
             } else {
-                notesAtTimepoint.push(note);
+                notesAtTicks.push(note);
             }
             totalNotes++;
         }
 
-        const sustainToTimelineMap = new Map<number, SustainEvent[]>();
+        const sustainToTicksMap = new Map<number, SustainEvent[]>();
         for (const sustain of midiFile.sustain) {
-            const sustainTimelinePosition = quantizerForPlayback.quantize(sustain.timepoint);
-            const sustainsAtTimepoint = sustainToTimelineMap.get(sustainTimelinePosition);
-            if (!sustainsAtTimepoint) {
-                sustainToTimelineMap.set(sustainTimelinePosition, [sustain]);
+            const sustainsAtTicks = sustainToTicksMap.get(sustain.ticks);
+            if (!sustainsAtTicks) {
+                sustainToTicksMap.set(sustain.ticks, [sustain]);
             } else {
-                sustainsAtTimepoint.push(sustain);
+                sustainsAtTicks.push(sustain);
             }
         }
 
-        for (const tempo of midiFile.tempo) {
-            tempoChangeMap.set(quantizerForPlayback.quantize(tempo.timepoint), tempo);
-        }
-
-        for (const timeSignature of midiFile.timeSignature) {
-            timeSignatureChangeMap.set(quantizerForPlayback.quantize(timeSignature.timepoint), timeSignature);
-        }
-
-        return { midiFile, timeline, noteToTimelineMap, sustainToTimelineMap, tempoChangeMap, timeSignatureChangeMap, totalNotes };
+        return { midiFile, noteToTicksMap, sustainToTicksMap, tempoTimeline, timeSignatureTimeline, totalNotes };
     };
 
-    const { midiFile, timeline, noteToTimelineMap, sustainToTimelineMap, tempoChangeMap, timeSignatureChangeMap, totalNotes } = await initialize();
+    const { midiFile, noteToTicksMap, sustainToTicksMap, tempoTimeline, timeSignatureTimeline, totalNotes } = await initialize();
 
     const activeNotes = new Map<number, NoteEvent>();
     const notesHit = new Set<string>();
 
     let timeWindow = 2;
     let lastUpdateTime = performance.now();
-    let startCursor = timeline.start;
     let wasStarted = false;
-    let currentTempo = midiFile.tempo[0];
-    let currentTimeSignature = midiFile.timeSignature[0];
-    let lastBeatTime = 0;
-
-    const getBeat = () => {
-        const ticks = beatTicks(midiFile.ticksPerQuarterNote, currentTimeSignature.numberOfMidiClocksInMetronomeClick);
-        const beatInterval = ticksToSeconds(ticks, currentTempo.tempoInMicrosecondsPerQuarterNote, midiFile.ticksPerQuarterNote);
-        const referenceTime = currentTempo.timepoint;
-        const howManyBeats = Math.floor((playbackTime - referenceTime) / beatInterval);
-        const beatTime = howManyBeats * beatInterval + referenceTime;
-        return { beatTime, beatInterval };
-    };
 
     const playbackLoop = () => {
         if (!isPlaybackStarted) {
@@ -336,19 +312,13 @@ async function startPlaybackLoop() {
         const now = performance.now();
 
         if (!wasStarted) {
-            startCursor = timeline.start;
             lastUpdateTime = now;
             playbackTime = -PLAYBACK_START_DELAY;
-            currentTempo = midiFile.tempo[0];
-            currentTimeSignature = midiFile.timeSignature[0];
-            lastBeatTime = getBeat().beatTime;
+            tempoTimeline.seekTo(playbackTime);
+            timeSignatureTimeline.seekTo(tempoTimeline.position.ticks);
             activeNotes.clear();
             notesHit.clear();
             wasStarted = true;
-        }
-
-        if (startCursor === undefined) {
-            return;
         }
 
         const deltaTime = (now - lastUpdateTime) / 1000;
@@ -362,17 +332,13 @@ async function startPlaybackLoop() {
 
         const startTimepoint = playbackTime - timeWindow;
         const endTimepoint = playbackTime + timeWindow;
-        const start = quantizerForPlayback.quantize(startTimepoint);
-        const end = quantizerForPlayback.quantize(endTimepoint);
 
-        while (startCursor.timestamp < start) {
-            const next = startCursor.next();
-            if (next === undefined) {
-                return;
-            }
-            startCursor = next;
-        }
-
+        const prevPosition = tempoTimeline.position;
+        tempoTimeline.seekBy(deltaTime * playbackSpeed);
+        const nextPosition = tempoTimeline.position;
+        const deltaTicks = nextPosition.ticks - prevPosition.ticks;
+        timeSignatureTimeline.seekBy(deltaTicks);
+        
         let endCursor = startCursor;
         while (endCursor.timestamp < end) {
             const notesAtTimepoint = noteToTimelineMap.get(endCursor.timestamp);
@@ -480,7 +446,7 @@ async function startPlaybackLoop() {
 
         if (playbackTime >= beatTime && lastBeatTime + beatInterval <= playbackTime) {
             if (isMetronomeEnabled) {
-                metronome.tick(1000);
+                metronome.click(1000);
             }
             lastBeatTime = beatTime;
         }

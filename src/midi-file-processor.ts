@@ -4,8 +4,19 @@
  * @module midi-file-processor
  */
 
-import { ControlChangeEvent, MetaEvent, META_EVENT_TYPE, MidiEvent, MidiEventType, MidiFile, NoteOffEvent, NoteOnEvent, SetTempoEvent, ticksToSeconds, TimeSignatureEvent } from "./midi-file";
-import { Timeline } from "./time";
+import { 
+    ControlChangeEvent, 
+    MetaEvent, 
+    META_EVENT_TYPE, 
+    MidiEvent, 
+    MidiEventType, 
+    MidiFile, 
+    NoteOffEvent,
+    NoteOnEvent, 
+    SetTempoEvent, 
+    ticksToSeconds, 
+    TimeSignatureEvent 
+} from "./midi-file";
 
 export interface NoteEvent {
     readonly number: number;
@@ -35,7 +46,7 @@ export interface TimeSignatureChange {
 export interface TempoChange {
     readonly ticks: number;
     readonly timepoint: number;
-    readonly tempoInMicrosecondsPerQuarterNote: number;
+    readonly microsecondsPerQuarterNote: number;
 }
 
 export interface ProcessedMidiFile {
@@ -58,7 +69,7 @@ export const processMidiFile = (midiFile: MidiFile): ProcessedMidiFile => {
     let tempo: TempoChange = {
         ticks: 0,
         timepoint: 0,
-        tempoInMicrosecondsPerQuarterNote: 500000,
+        microsecondsPerQuarterNote: 500_000,
     };
 
     let timeSignature: TimeSignatureChange = {
@@ -100,20 +111,19 @@ export const processMidiFile = (midiFile: MidiFile): ProcessedMidiFile => {
         }
     }
 
-    const timeline = new Timeline(ticks);
-    const activeNotes = new Map<number, {event: NoteOnEvent, timepoint: number}>();
+    const timeline = Array.from(new Set(ticks)).sort((a, b) => a - b);
+    const activeNotes = new Map<number, { event: NoteOnEvent, timepoint: number }>();
     const notes: NoteEvent[] = [];
     const sustain: SustainEvent[] = [];
     const timepoints: number[] = [];
 
     let totalTime = 0.0;
-    let cursor = timeline.start;
-    while (cursor) {
-        const ticks = cursor.timestamp;
+    for (let index = 0; index < timeline.length; index++) {
+        const ticks = timeline[index];
         const metaEvents = metaEventsMap.get(ticks);
         const midiEvents = midiEventsMap.get(ticks);
-        const deltaTicks = ticks - (cursor.prev()?.timestamp ?? 0);
-        const time = ticksToSeconds(deltaTicks, tempo.tempoInMicrosecondsPerQuarterNote, midiFile.ticksPerQuarterNote);
+        const deltaTicks = ticks - (timeline[index - 1] ?? 0);
+        const time = ticksToSeconds(deltaTicks, tempo.microsecondsPerQuarterNote, midiFile.ticksPerQuarterNote);
         totalTime += time;
         timepoints.push(totalTime);
 
@@ -124,7 +134,7 @@ export const processMidiFile = (midiFile: MidiFile): ProcessedMidiFile => {
                     tempo = {
                         ticks: setTempoEvent.ticks,
                         timepoint: totalTime,
-                        tempoInMicrosecondsPerQuarterNote: setTempoEvent.microsecondsPerQuarterNote
+                        microsecondsPerQuarterNote: setTempoEvent.microsecondsPerQuarterNote
                     };
                     tempoChangeMap.set(ticks, tempo);
                 } else if (event.type.code === META_EVENT_TYPE.TIME_SIGNATURE.code) {
@@ -141,13 +151,13 @@ export const processMidiFile = (midiFile: MidiFile): ProcessedMidiFile => {
                 }
             }
         }
-      
+
         if (midiEvents) {
             for (const event of midiEvents) {
                 if (event.type.code === MidiEventType.NOTE_ON.code) {
                     const noteOnEvent = event as NoteOnEvent;
                     if (noteOnEvent.velocity > 0) {
-                        activeNotes.set(noteOnEvent.noteNumber, {event: noteOnEvent, timepoint: totalTime});
+                        activeNotes.set(noteOnEvent.noteNumber, { event: noteOnEvent, timepoint: totalTime });
                     } else {
                         const active = activeNotes.get(noteOnEvent.noteNumber);
                         if (active) {
@@ -192,8 +202,6 @@ export const processMidiFile = (midiFile: MidiFile): ProcessedMidiFile => {
                 }
             }
         }
-
-        cursor = cursor.next();
     }
 
     return {
